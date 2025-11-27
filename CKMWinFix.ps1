@@ -303,6 +303,31 @@ Function Audit-Software {
 }
 
 # =========================
+# Driver's and Software Auto update
+# =========================
+Function Update-System {
+    Log "Starting driver and software updates..."
+    Write-Host "=== Updating Drivers and Software ===" -ForegroundColor Yellow
+
+    try {
+        # Update drivers via Windows Update
+        Write-Host "Checking for driver updates..." -ForegroundColor Cyan
+        Get-WindowsUpdate -MicrosoftUpdate -AcceptAll -Install -IgnoreReboot | Out-Host
+        Log "Driver updates applied."
+
+        # Update apps via Winget
+        Write-Host "Updating installed applications..." -ForegroundColor Cyan
+        winget upgrade --all --silent | Out-Host
+        Log "Software updates applied."
+    }
+    catch {
+        Log "Update error: $_"
+    }
+
+    Log "Driver and software updates completed."
+}
+
+# =========================
 # Performance baseline (adds disk I/O and network throughput)
 # =========================
 Function Compare-PerformanceBaseline {
