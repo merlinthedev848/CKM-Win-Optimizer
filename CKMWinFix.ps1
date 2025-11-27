@@ -54,29 +54,39 @@ try {
 # =========================
 Function Check-SystemHealth {
     Log "Starting System Health Check..."
-    Write-Host "=== System Health Summary ($DisplayOS) ==="
+    Write-Host "=== System Health Check ===" -ForegroundColor Yellow
 
     try {
-        $CPU = (Get-Counter '\Processor(_Total)\% Processor Time').CounterSamples[0].CookedValue
-        $RAM = Get-WmiObject -Class Win32_OperatingSystem
-        $RAMFree = [math]::Round(($RAM.FreePhysicalMemory / 1MB), 2)
-        $RAMTotal = [math]::Round(($RAM.TotalVisibleMemorySize / 1MB), 2)
-        $RAMUsage = [math]::Round((($RAMTotal - $RAMFree) / $RAMTotal) * 100, 2)
+        $CPU = Get-WmiObject Win32_Processor -Verbose
+        $RAM = Get-WmiObject Win32_OperatingSystem -Verbose
+        $Disk = Get-WmiObject Win32_LogicalDisk -Filter "DeviceID='C:'" -Verbose
 
-        Write-Host "CPU Usage: $([math]::Round($CPU,2))%" -ForegroundColor Green
-        Write-Host "Memory Usage: $RAMUsage% ($RAMFree GB free of $RAMTotal GB)" -ForegroundColor Green
-    } catch { Log "Health counters error: $_" }
+        $Results = @(
+            [PSCustomObject]@{ Metric="CPU"; Value="$($CPU.LoadPercentage)%"; Status="OK" },
+            [PSCustomObject]@{ Metric="RAM"; Value="$([math]::Round(($RAM.TotalVisibleMemorySize - $RAM.FreePhysicalMemory)/1MB)) MB used"; Status="OK" },
+            [PSCustomObject]@{ Metric="Disk"; Value="$([math]::Round($Disk.FreeSpace/1GB)) GB free"; Status="OK" }
+        )
 
-    try {
-        Get-PSDrive -PSProvider FileSystem | ForEach-Object {
-            $FreeGB = [math]::Round($_.Free / 1GB, 2)
-            $TotalGB = [math]::Round(($_.Used + $_.Free) / 1GB, 2)
-            Write-Host "Drive $($_.Name) - Free: $FreeGB GB of $TotalGB GB"
+        $Results | Format-Table -AutoSize
+        $Results | Out-String | Add-Content -Path $LogFile
+
+        # ASCII bar chart for RAM/disk
+        Write-Host "`n=== Health Visual ===" -ForegroundColor Magenta
+        foreach ($Result in $Results) {
+            $Bars = if ($Result.Metric -eq "CPU") { [math]::Round($CPU.LoadPercentage/5) }
+                    elseif ($Result.Metric -eq "RAM") { [math]::Round(($RAM.TotalVisibleMemorySize - $RAM.FreePhysicalMemory)/100000) }
+                    else { [math]::Round($Disk.FreeSpace/1GB/10) }
+            $BarString = ("█" * $Bars)
+            Write-Host ("{0,-10} {1,-20} | {2}" -f $Result.Metric, $Result.Value, $BarString) -ForegroundColor Cyan
+            Add-Content -Path $LogFile -Value ("{0,-10} {1,-20} | {2}" -f $Result.Metric, $Result.Value, $BarString)
         }
-    } catch { Log "Drive space listing error: $_" }
+    } catch {
+        Log "System Health error: $($_.Exception.Message)"
+    }
 
-    Log "System Health Check Complete."
+    Log "System Health Check Completed."
 }
+
 
 # =========================
 # Fix Permissions
@@ -275,29 +285,29 @@ Function Troubleshoot-Issues {
 # Disk integrity (CHKDSK)
 # =========================
 Function Check-DiskIntegrity {
-    if ($Global:EnableChkDsk) {
-        Log "Checking Disk Integrity (CHKDSK)..."
-        Write-Host "=== Running CHKDSK on C: (verbose mode, may require reboot) ===" -ForegroundColor Yellow
+    Log "Starting Disk Integrity Check..."
+    Write-Host "=== Disk Integrity ===" -ForegroundColor Yellow
 
-        try {
-            $StartTime = Get-Date
-            Write-Host "CHKDSK started at $StartTime" -ForegroundColor Cyan
+    try {
+        $Disks = Get-PhysicalDisk -Verbose
+        $Results = $Disks | Select FriendlyName, OperationalStatus, HealthStatus
 
-            # Run CHKDSK and stream verbose output directly to console
-            cmd /c "chkdsk C: /F /R /V"
+        $Results | Format-Table -AutoSize
+        $Results | Out-String | Add-Content -Path $LogFile
 
-            $EndTime = Get-Date
-            $Duration = $EndTime - $StartTime
-            Write-Host "CHKDSK finished at $EndTime" -ForegroundColor Green
-            Write-Host "Total runtime: $($Duration.Hours)h $($Duration.Minutes)m $($Duration.Seconds)s" -ForegroundColor Green
-            Log "CHKDSK completed in $($Duration.Hours)h $($Duration.Minutes)m $($Duration.Seconds)s."
-        } catch {
-            Log "CHKDSK error: $_"
+        Write-Host "`n=== Disk Visual ===" -ForegroundColor Magenta
+        foreach ($Disk in $Results) {
+            $BarString = if ($Disk.HealthStatus -eq "Healthy") { "██████████" } else { "██ ERROR ██" }
+            Write-Host ("{0,-20} {1,-15} {2,-10} | {3}" -f $Disk.FriendlyName, $Disk.OperationalStatus, $Disk.HealthStatus, $BarString) -ForegroundColor Cyan
+            Add-Content -Path $LogFile -Value ("{0,-20} {1,-15} {2,-10} | {3}" -f $Disk.FriendlyName, $Disk.OperationalStatus, $Disk.HealthStatus, $BarString)
         }
-    } else {
-        Log "CHKDSK disabled by toggle."
+    } catch {
+        Log "Disk Integrity error: $($_.Exception.Message)"
     }
+
+    Log "Disk Integrity Check Completed."
 }
+
 
 # =========================
 # Windows updates (PSWindowsUpdate or USOClient fallback)
@@ -332,6 +342,8 @@ Function Audit-Software {
     Log "Software Audit Completed."
 }
 
+
+
 # =========================
 # Driver's and Software Auto update
 # =========================
@@ -361,36 +373,36 @@ Function Update-System {
 # Performance baseline (adds disk I/O and network throughput)
 # =========================
 Function Compare-PerformanceBaseline {
-    $BaselineFile = "$PSScriptRoot\PerformanceBaseline.json"
-    Log "Comparing Performance Metrics with Baseline..."
+    Log "Starting Performance Baseline Comparison..."
+    Write-Host "=== Performance Baseline ===" -ForegroundColor Yellow
+
     try {
-        $DiskIORead = (Get-Counter '\PhysicalDisk(_Total)\Disk Read Bytes/sec').CounterSamples[0].CookedValue
-        $DiskIOWrite = (Get-Counter '\PhysicalDisk(_Total)\Disk Write Bytes/sec').CounterSamples[0].CookedValue
-        $NetBytes = (Get-Counter '\Network Interface(*)\Bytes Total/sec').CounterSamples | Measure-Object CookedValue -Sum | Select-Object -ExpandProperty Sum
+        $Perf = Get-Counter '\Processor(_Total)\% Processor Time','\Memory\Available MBytes','\PhysicalDisk(_Total)\Avg. Disk Queue Length' -Verbose
+        $Results = @(
+            [PSCustomObject]@{ Metric="CPU Usage"; Value="$([math]::Round($Perf.CounterSamples[0].CookedValue))%" },
+            [PSCustomObject]@{ Metric="Available RAM"; Value="$([math]::Round($Perf.CounterSamples[1].CookedValue)) MB" },
+            [PSCustomObject]@{ Metric="Disk Queue"; Value="$([math]::Round($Perf.CounterSamples[2].CookedValue,2))" }
+        )
 
-        $CurrentMetrics = @{
-            CPUUsage     = [math]::Round((Get-Counter '\Processor(_Total)\% Processor Time').CounterSamples[0].CookedValue,2)
-            RAMUsageMB   = [math]::Round(((Get-WmiObject Win32_OperatingSystem).TotalVisibleMemorySize - (Get-WmiObject Win32_OperatingSystem).FreePhysicalMemory) / 1MB, 2)
-            DiskReadBps  = [math]::Round($DiskIORead, 0)
-            DiskWriteBps = [math]::Round($DiskIOWrite, 0)
-            NetworkBps   = [math]::Round($NetBytes, 0)
-        }
+        $Results | Format-Table -AutoSize
+        $Results | Out-String | Add-Content -Path $LogFile
 
-        if (Test-Path $BaselineFile) {
-            $BaselineMetrics = Get-Content -Path $BaselineFile | ConvertFrom-Json
-            Write-Host "=== Performance Baseline Comparison ==="
-            Write-Host "CPU Usage: Current = $($CurrentMetrics.CPUUsage)% | Baseline = $($BaselineMetrics.CPUUsage)%"
-            Write-Host "RAM Usage: Current = $($CurrentMetrics.RAMUsageMB) MB | Baseline = $($BaselineMetrics.RAMUsageMB) MB"
-            Write-Host "Disk Read: Current = $($CurrentMetrics.DiskReadBps) B/s | Baseline = $($BaselineMetrics.DiskReadBps) B/s"
-            Write-Host "Disk Write: Current = $($CurrentMetrics.DiskWriteBps) B/s | Baseline = $($BaselineMetrics.DiskWriteBps) B/s"
-            Write-Host "Network: Current = $($CurrentMetrics.NetworkBps) B/s | Baseline = $($BaselineMetrics.NetworkBps) B/s"
-        } else {
-            Write-Host "No baseline found. Saving current metrics as baseline."
-            $CurrentMetrics | ConvertTo-Json | Set-Content -Path $BaselineFile
+        Write-Host "`n=== Performance Visual ===" -ForegroundColor Magenta
+        foreach ($Result in $Results) {
+            $Bars = if ($Result.Metric -eq "CPU Usage") { [math]::Round(($Perf.CounterSamples[0].CookedValue)/5) }
+                    elseif ($Result.Metric -eq "Available RAM") { [math]::Round(($Perf.CounterSamples[1].CookedValue)/100) }
+                    else { [math]::Round(($Perf.CounterSamples[2].CookedValue)*10) }
+            $BarString = ("█" * $Bars)
+            Write-Host ("{0,-15} {1,-15} | {2}" -f $Result.Metric, $Result.Value, $BarString) -ForegroundColor Cyan
+            Add-Content -Path $LogFile -Value ("{0,-15} {1,-15} | {2}" -f $Result.Metric, $Result.Value, $BarString)
         }
-        Log "Baseline Comparison Completed."
-    } catch { Log "Baseline metrics error: $_" }
+    } catch {
+        Log "Performance Baseline error: $($_.Exception.Message)"
+    }
+
+    Log "Performance Baseline Completed."
 }
+
 
 # =========================
 # Backup (robocopy, skips junctions, logs to file)
@@ -435,13 +447,13 @@ Function Analyze-EventLogs {
 }
 
 # =========================
-# Debloat Windows Apps (verbose added)
+# Debloat Windows Apps + Telemetry Removal (Unified)
 # =========================
-
 Function Debloat-Windows {
     if (-not $Global:EnableDebloat) { Log "Debloat disabled."; return }
 
     Log "Debloating Windows apps and features for $ProductName ..."
+
     try {
         # Protected apps that should never be removed
         $ProtectedApps = @(
@@ -464,67 +476,137 @@ Function Debloat-Windows {
             "Microsoft.UI.Xaml",
             "Microsoft.NET.Native.Runtime",
             "Microsoft.NET.Native.Framework",
-            "Microsoft.Copilot"   # <-- fixed comma, Copilot now protected
+            "Microsoft.Copilot",
+            "Windows.PrintDialog",
+            "Microsoft.MicrosoftEdgeDevToolsClient",
+            "Microsoft.Windows.Apprep.ChxApp",
+            "Microsoft.Windows.AssignedAccessLockApp",
+            "Microsoft.Windows.CallingShellApp",
+            "Microsoft.Windows.ParentalControls",
+            "Microsoft.XboxGameCallableUI",
+            "NCSIUwpApp",
+            "Microsoft.Windows.FilePicker",
+            "Microsoft.Windows.AppResolverUX",
+            "Microsoft.ECApp",
+            "Microsoft.LockApp",
+            "Microsoft.Win32WebViewHost",
+            "Microsoft.Windows.CapturePicker",
+            "Microsoft.Windows.ContentDeliveryManager",
+            "Microsoft.Windows.NarratorQuickStart",
+            "Microsoft.Windows.OOBENetworkCaptivePortal",
+            "Microsoft.Windows.OOBENetworkConnectionFlow",
+            "Microsoft.Windows.PeopleExperienceHost"
         )
 
-        # Filter out protected and framework packages
-        $Apps = Get-AppxPackage -AllUsers -Verbose | Where-Object {
-            -not $_.IsFramework -and $ProtectedApps -notcontains $_.Name
+        # Curated safe-to-remove apps
+        $DebloatTargets = @(
+            "Microsoft.3DBuilder",
+            "Microsoft.MSPaint",                # Paint3D
+            "Microsoft.Microsoft3DViewer",
+            "Microsoft.SkypeApp",
+            "Microsoft.XboxApp",
+            "Microsoft.XboxGamingOverlay",
+            "Microsoft.XboxIdentityProvider",
+            "Microsoft.XboxSpeechToTextOverlay",
+            "Microsoft.ZuneMusic",              # Groove Music
+            "Microsoft.ZuneVideo",              # Movies & TV
+            "Microsoft.GetHelp",
+            "Microsoft.Getstarted",
+            "Microsoft.MicrosoftOfficeHub",
+            "Microsoft.MicrosoftSolitaireCollection",
+            "Microsoft.People",
+            "Microsoft.OneConnect",
+            "Microsoft.MixedReality.Portal",
+            "Microsoft.YourPhone"
+        )
+
+        # Remove curated apps only
+        foreach ($Target in $DebloatTargets) {
+            $App = Get-AppxPackage -AllUsers | Where-Object { $_.Name -eq $Target }
+            if ($App) {
+                try {
+                    Remove-AppxPackage -Package $App.PackageFullName -AllUsers -ErrorAction SilentlyContinue
+                    if ($?) { Log "Removed: $Target" } else { Log "Skipped: $Target" }
+                } catch {
+                    Log "Skipped (protected or system): $Target"
+                }
+            } else {
+                Log "Not present: $Target"
+            }
         }
 
-        $Total = $Apps.Count
-        $i = 0
-
-        foreach ($App in $Apps) {
-            $i++
-            $Percent = [math]::Round(($i / $Total) * 100, 0)
-            Write-Progress -Activity "Debloating Windows" -Status "Removing $($App.Name)" -PercentComplete $Percent
-
-            try {
-                Log "Attempting removal: $($App.Name)"
-                Remove-AppxPackage -Package $App.PackageFullName -AllUsers -Verbose
-                Log "Removed: $($App.Name)"
-            } catch {
-                Log "Failed to remove: $($App.Name) - $($_.Exception.Message)"
-                Write-Host "Error removing $($App.Name): $($_.Exception.Message)" -ForegroundColor Red
-            }
+        # Skip protected apps cleanly
+        foreach ($App in $ProtectedApps) {
+            Log "Skipped (protected): $App"
         }
 
         # OS-specific tweaks
         if ($ProductName -like "*Windows 10*") {
             Log "Disabling Cortana..."
-            New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" -Force -Verbose | Out-Null
-            Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" -Name "AllowCortana" -Value 0 -Type DWord -Verbose
+            New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" -Force | Out-Null
+            Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" -Name "AllowCortana" -Value 0 -Type DWord -ErrorAction SilentlyContinue
         }
         elseif ($ProductName -like "*Windows 11*") {
             Log "Targeted removals for Windows 11..."
-            Get-AppxPackage -AllUsers -Verbose | Where-Object { $_.Name -like "*WebExperience*" -or $_.Name -like "*MicrosoftTeams*" -or $_.Name -like "*YourPhone*" } | ForEach-Object {
+            Get-AppxPackage -AllUsers | Where-Object { $_.Name -like "*WebExperience*" -or $_.Name -like "*MicrosoftTeams*" -or $_.Name -like "*YourPhone*" } | ForEach-Object {
                 try {
-                    Remove-AppxPackage -Package $_.PackageFullName -AllUsers -Verbose
-                    Log "Removed: $($_.Name)"
-                } catch {
-                    Log "Failed to remove: $($_.Name) - $($_.Exception.Message)"
-                }
+                    Remove-AppxPackage -Package $_.PackageFullName -AllUsers -ErrorAction SilentlyContinue
+                    if ($?) { Log "Removed: $($_.Name)" } else { Log "Skipped: $($_.Name)" }
+                } catch { Log "Skipped (system): $($_.Name)" }
             }
             Log "Disabling Transparency..."
-            New-Item -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Force -Verbose | Out-Null
-            Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name "EnableTransparency" -Value 0 -Type DWord -Verbose
+            New-Item -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Force | Out-Null
+            Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name "EnableTransparency" -Value 0 -Type DWord -ErrorAction SilentlyContinue
         }
 
-        Log "Turning off telemetry and background apps..."
-        New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Force -Verbose | Out-Null
-        Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "AllowTelemetry" -Value 0 -Type DWord -Verbose
+        # Disable telemetry via registry
+        Log "Disabling telemetry via registry..."
+        New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Force | Out-Null
+        Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "AllowTelemetry" -Value 0 -Type DWord -ErrorAction SilentlyContinue
 
-        New-Item -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications" -Force -Verbose | Out-Null
-        Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications" -Name "GlobalUserDisabled" -Value 1 -Type DWord -Verbose
+        New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\SQMClient\Windows" -Force | Out-Null
+        Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\SQMClient\Windows" -Name "CEIPEnable" -Value 0 -Type DWord -ErrorAction SilentlyContinue
+
+        New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppCompat" -Force | Out-Null
+        Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppCompat" -Name "AITEnable" -Value 0 -Type DWord -ErrorAction SilentlyContinue
+
+        # Disable telemetry services
+        $TelemetryServices = @("DiagTrack","dmwappushservice","WerSvc","PcaSvc")
+        foreach ($svc in $TelemetryServices) {
+            try {
+                Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue
+                Set-Service -Name $svc -StartupType Disabled -ErrorAction SilentlyContinue
+                Log "Disabled telemetry service: $svc"
+            } catch {
+                Log "Skipped (protected or not present): $svc"
+            }
+        }
+
+        # Disable telemetry scheduled tasks
+        $TelemetryTasks = @(
+            "\Microsoft\Windows\Application Experience\ProgramDataUpdater",
+            "\Microsoft\Windows\Autochk\Proxy",
+            "\Microsoft\Windows\Customer Experience Improvement Program\Consolidator",
+            "\Microsoft\Windows\Customer Experience Improvement Program\KernelCeipTask",
+            "\Microsoft\Windows\Customer Experience Improvement Program\UsbCeip"
+        )
+        foreach ($task in $TelemetryTasks) {
+            try {
+                schtasks /Change /TN $task /Disable
+                Log "Disabled telemetry task: $task"
+            } catch {
+                Log "Skipped (protected or not present): $task"
+            }
+        }
+
     } catch {
         Log "Debloat error: $($_.Exception.Message)"
-        Write-Host "Debloat error: $($_.Exception.Message)" -ForegroundColor Red
     }
 
     Write-Progress -Activity "Debloating Windows" -Completed
     Log "Debloat Completed."
 }
+
 
 
 # =========================
