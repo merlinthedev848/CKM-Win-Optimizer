@@ -24,7 +24,7 @@ $Global:ClearEventLogs      = $false   # Off by default; turn on if you want to 
 $Global:DoScheduleTask      = $true
 $Global:EnableDriverUpdate  = $true    # Automatically update drivers via Windows Update
 $Global:EnableSoftwareUpdate= $true    # Automatically update apps via Winget
-
+$Global:FixPermissions = $false   # Set to $true to reset system permissions
 
 # =========================
 # Detect OS version and product
@@ -76,6 +76,33 @@ Function Check-SystemHealth {
     } catch { Log "Drive space listing error: $_" }
 
     Log "System Health Check Complete."
+}
+
+# =========================
+# Fix Permissions
+# =========================
+
+Function Fix-SystemPermissions {
+    if (-not $Global:FixPermissions) { Log "Permission repair disabled."; return }
+
+    Log "Resetting system permissions..."
+    Write-Host "=== Resetting File and Registry Permissions ===" -ForegroundColor Yellow
+
+    try {
+        # Reset core folder ACLs
+        icacls "C:\Windows" /reset /t /c /q | Out-Host
+        icacls "C:\Program Files" /reset /t /c /q | Out-Host
+        icacls "C:\Program Files (x86)" /reset /t /c /q | Out-Host
+
+        # Reset registry & security policy
+        secedit /configure /cfg %windir%\inf\defltbase.inf /db defltbase.sdb /verbose | Out-Host
+
+        Log "System permissions reset to defaults."
+    } catch {
+        Log "Permission repair error: $_"
+    }
+
+    Log "Permission repair completed."
 }
 
 # =========================
