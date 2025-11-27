@@ -71,11 +71,11 @@ The script is OS-aware: it detects whether it is running on Windows 10 or Window
 1. Save the script as `CKMWinFix.ps1` in a folder of your choice (e.g., `C:\Scripts\CKMWinFix.ps1`).
 2. Ensure PowerShell execution policy allows running scripts:
    ```powershell
-   Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+   Set-ExecutionPolicy RemoteSigned -Scope CurrentUser```    
 
 
 Run the Script Manually:
-```.\CKMWinFix.ps1
+```.\CKMWinFix.ps1```
 
 On first run, it will:
  - Perform all checks, fixes, and optimizations
