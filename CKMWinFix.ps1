@@ -383,41 +383,60 @@ Function Analyze-EventLogs {
     Log "Event Log Analysis Completed."
 }
 
-# =========================
-# Debloat (OS-aware, safe defaults)
-# =========================
 Function Debloat-Windows {
     if (-not $Global:EnableDebloat) { Log "Debloat disabled."; return }
 
     Log "Debloating Windows apps and features for $ProductName ..."
     try {
+        # Protected apps that should never be removed
+        $ProtectedApps = @(
+            "windows.immersivecontrolpanel",
+            "Microsoft.Edge",
+            "Microsoft.Windows.ShellExperienceHost",
+            "Microsoft.Windows.StartMenuExperienceHost",
+            "Microsoft.WindowsStore",
+            "Microsoft.WindowsCalculator",
+            "Microsoft.WindowsNotepad",
+            "Microsoft.Windows.Photos"
+        )
+
         if ($ProductName -like "*Windows 10*") {
-            # Keep essentials
-            $Keep10 = @('Microsoft.WindowsStore','Microsoft.WindowsCalculator','Microsoft.WindowsNotepad','Microsoft.Windows.Photos')
-            Get-AppxPackage -AllUsers | Where-Object { $Keep10 -notcontains $_.Name } | ForEach-Object {
-                Remove-AppxPackage -Package $_.PackageFullName -AllUsers -ErrorAction SilentlyContinue
+            Get-AppxPackage -AllUsers | Where-Object { $ProtectedApps -notcontains $_.Name } | ForEach-Object {
+                try {
+                    Remove-AppxPackage -Package $_.PackageFullName -AllUsers -ErrorAction SilentlyContinue
+                    Log "Removed: $($_.Name)"
+                } catch {
+                    Log "Failed to remove: $($_.Name) - $_"
+                }
             }
             # Disable Cortana
             New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" -Force | Out-Null
             Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" -Name "AllowCortana" -Value 0 -Type DWord -ErrorAction SilentlyContinue
         }
         elseif ($ProductName -like "*Windows 11*") {
-            # Remove Widgets, Teams, YourPhone; keep essentials
-            $Keep11 = @('Microsoft.WindowsStore','Microsoft.WindowsCalculator','Microsoft.WindowsNotepad','Microsoft.Windows.Photos')
-            Get-AppxPackage -AllUsers | Where-Object { $Keep11 -notcontains $_.Name } | ForEach-Object {
-                # Extra targeted removals
+            Get-AppxPackage -AllUsers | Where-Object { $ProtectedApps -notcontains $_.Name } | ForEach-Object {
                 if ($_.Name -like "*WebExperience*" -or $_.Name -like "*MicrosoftTeams*" -or $_.Name -like "*YourPhone*") {
-                    Remove-AppxPackage -Package $_.PackageFullName -AllUsers -ErrorAction SilentlyContinue
+                    try {
+                        Remove-AppxPackage -Package $_.PackageFullName -AllUsers -ErrorAction SilentlyContinue
+                        Log "Removed: $($_.Name)"
+                    } catch {
+                        Log "Failed to remove: $($_.Name) - $_"
+                    }
                 }
             }
             # Disable Transparency (Win11 UI)
             New-Item -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Force | Out-Null
             Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name "EnableTransparency" -Value 0 -Type DWord -ErrorAction SilentlyContinue
-        } else {
+        }
+        else {
             Log "Unknown Windows version; applying generic debloat keep list."
-            $KeepGeneric = @('Microsoft.WindowsStore','Microsoft.WindowsCalculator','Microsoft.WindowsNotepad','Microsoft.Windows.Photos')
-            Get-AppxPackage -AllUsers | Where-Object { $KeepGeneric -notcontains $_.Name } | ForEach-Object {
-                Remove-AppxPackage -Package $_.PackageFullName -AllUsers -ErrorAction SilentlyContinue
+            Get-AppxPackage -AllUsers | Where-Object { $ProtectedApps -notcontains $_.Name } | ForEach-Object {
+                try {
+                    Remove-AppxPackage -Package $_.PackageFullName -AllUsers -ErrorAction SilentlyContinue
+                    Log "Removed: $($_.Name)"
+                } catch {
+                    Log "Failed to remove: $($_.Name) - $_"
+                }
             }
         }
 
