@@ -75,7 +75,7 @@ The script is OS-aware: it detects whether it is running on Windows 10 or Window
 
 
 Run the Script Manually:
-.\CKMWinFix.ps1
+```.\CKMWinFix.ps1
 
 On first run, it will:
  - Perform all checks, fixes, and optimizations
