@@ -24,7 +24,7 @@ $Global:ClearEventLogs      = $false   # Off by default; turn on if you want to 
 $Global:DoScheduleTask      = $true
 $Global:EnableDriverUpdate  = $true    # Automatically update drivers via Windows Update
 $Global:EnableSoftwareUpdate= $true    # Automatically update apps via Winget
-$Global:FixPermissions = $false   # Set to $true to reset system permissions
+$Global:FixPermissions = $true   # Set to $true to reset system permissions
 
 # =========================
 # Detect OS version and product
