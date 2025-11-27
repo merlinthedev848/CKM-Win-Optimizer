@@ -36,6 +36,7 @@ Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
   - System File Checker (`sfc /scannow`)
   - Deployment Image Servicing and Management (`DISM /RestoreHealth`)
   - Disk integrity check (`chkdsk`)
+  - Fixes permissions on folders such Windows/Program Files / Program Files(x86)
 
 - **Cleanup**
   - Temp files, Prefetch, Windows Update cache, Delivery Optimization files
