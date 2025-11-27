@@ -435,7 +435,7 @@ Function Analyze-EventLogs {
 }
 
 # =========================
-# Debloat Windows Apps (refined)
+# Debloat Windows Apps (verbose added)
 # =========================
 
 Function Debloat-Windows {
@@ -463,12 +463,12 @@ Function Debloat-Windows {
             "Microsoft.VCLibs",
             "Microsoft.UI.Xaml",
             "Microsoft.NET.Native.Runtime",
-            "Microsoft.NET.Native.Framework"
-            "Microsoft.Windows.Copilot"
+            "Microsoft.NET.Native.Framework",
+            "Microsoft.Copilot"   # <-- fixed comma, Copilot now protected
         )
 
         # Filter out protected and framework packages
-        $Apps = Get-AppxPackage -AllUsers | Where-Object {
+        $Apps = Get-AppxPackage -AllUsers -Verbose | Where-Object {
             -not $_.IsFramework -and $ProtectedApps -notcontains $_.Name
         }
 
@@ -481,99 +481,122 @@ Function Debloat-Windows {
             Write-Progress -Activity "Debloating Windows" -Status "Removing $($App.Name)" -PercentComplete $Percent
 
             try {
-                # Attempt removal silently; ignore permission errors
-                Remove-AppxPackage -Package $App.PackageFullName -AllUsers -ErrorAction SilentlyContinue
-                if ($?) { Log "Removed: $($App.Name)" } else { Log "Skipped: $($App.Name)" }
+                Log "Attempting removal: $($App.Name)"
+                Remove-AppxPackage -Package $App.PackageFullName -AllUsers -Verbose
+                Log "Removed: $($App.Name)"
             } catch {
-                # Suppress noisy error output, just log skip
-                Log "Skipped (protected or system): $($App.Name)"
+                Log "Failed to remove: $($App.Name) - $($_.Exception.Message)"
+                Write-Host "Error removing $($App.Name): $($_.Exception.Message)" -ForegroundColor Red
             }
         }
 
         # OS-specific tweaks
         if ($ProductName -like "*Windows 10*") {
-            # Disable Cortana
-            New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" -Force | Out-Null
-            Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" -Name "AllowCortana" -Value 0 -Type DWord -ErrorAction SilentlyContinue
+            Log "Disabling Cortana..."
+            New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" -Force -Verbose | Out-Null
+            Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" -Name "AllowCortana" -Value 0 -Type DWord -Verbose
         }
         elseif ($ProductName -like "*Windows 11*") {
-            # Targeted removals
-            Get-AppxPackage -AllUsers | Where-Object { $_.Name -like "*WebExperience*" -or $_.Name -like "*MicrosoftTeams*" -or $_.Name -like "*YourPhone*" } | ForEach-Object {
+            Log "Targeted removals for Windows 11..."
+            Get-AppxPackage -AllUsers -Verbose | Where-Object { $_.Name -like "*WebExperience*" -or $_.Name -like "*MicrosoftTeams*" -or $_.Name -like "*YourPhone*" } | ForEach-Object {
                 try {
-                    Remove-AppxPackage -Package $_.PackageFullName -AllUsers -ErrorAction SilentlyContinue
-                    if ($?) { Log "Removed: $($_.Name)" } else { Log "Skipped: $($_.Name)" }
-                } catch { Log "Skipped (system): $($_.Name)" }
+                    Remove-AppxPackage -Package $_.PackageFullName -AllUsers -Verbose
+                    Log "Removed: $($_.Name)"
+                } catch {
+                    Log "Failed to remove: $($_.Name) - $($_.Exception.Message)"
+                }
             }
-            # Disable Transparency (Win11 UI)
-            New-Item -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Force | Out-Null
-            Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name "EnableTransparency" -Value 0 -Type DWord -ErrorAction SilentlyContinue
+            Log "Disabling Transparency..."
+            New-Item -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Force -Verbose | Out-Null
+            Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name "EnableTransparency" -Value 0 -Type DWord -Verbose
         }
 
-        # Common telemetry and background apps off
-        New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Force | Out-Null
-        Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "AllowTelemetry" -Value 0 -Type DWord -ErrorAction SilentlyContinue
+        Log "Turning off telemetry and background apps..."
+        New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Force -Verbose | Out-Null
+        Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "AllowTelemetry" -Value 0 -Type DWord -Verbose
 
-        New-Item -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications" -Force | Out-Null
-        Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications" -Name "GlobalUserDisabled" -Value 1 -Type DWord -ErrorAction SilentlyContinue
-    } catch { Log "Debloat error: $_" }
+        New-Item -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications" -Force -Verbose | Out-Null
+        Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications" -Name "GlobalUserDisabled" -Value 1 -Type DWord -Verbose
+    } catch {
+        Log "Debloat error: $($_.Exception.Message)"
+        Write-Host "Debloat error: $($_.Exception.Message)" -ForegroundColor Red
+    }
 
     Write-Progress -Activity "Debloating Windows" -Completed
     Log "Debloat Completed."
 }
 
+
 # =========================
-# Network optimization (stack reset + NIC tuning)
+# Network optimization (stack reset + NIC tuning, verbose)
 # =========================
 Function Optimize-NetworkAuto {
     Log "Starting Auto Network Optimization..."
     Write-Host "=== Detecting Network Adapter Speed ===" -ForegroundColor Yellow
 
     try {
-        # Get all active network adapters
-        $Adapters = Get-CimInstance Win32_NetworkAdapter | Where-Object { $_.NetEnabled -eq $true }
+        # Get all active network adapters with a valid Speed property
+        $Adapters = Get-CimInstance Win32_NetworkAdapter -Verbose | Where-Object { $_.NetEnabled -eq $true -and $_.Speed -gt 0 }
 
         foreach ($Adapter in $Adapters) {
-            $SpeedMbps = [math]::Round($Adapter.Speed / 1MB)  # Convert bits/sec to Mbps
-            Write-Host "Adapter: $($Adapter.Name)" -ForegroundColor Cyan
-            Write-Host "Detected Speed: $SpeedMbps Mbps" -ForegroundColor Green
+            try {
+                $SpeedMbps = [math]::Round($Adapter.Speed / 1MB)  # Convert bits/sec to Mbps
+                Write-Host "Adapter: $($Adapter.Name)" -ForegroundColor Cyan
+                Write-Host "Detected Speed: $SpeedMbps Mbps" -ForegroundColor Green
+                Log "Adapter $($Adapter.Name) speed detected: $SpeedMbps Mbps"
 
-            # Apply tuning based on speed
-            if ($SpeedMbps -ge 10000) {
-                Write-Host "Applying 10 Gbps optimization profile..." -ForegroundColor Yellow
-                netsh int tcp set global rss=enabled
-                netsh int tcp set global autotuninglevel=normal
-                netsh int tcp set global chimney=disabled
-                Log "10 Gbps profile applied."
-            }
-            elseif ($SpeedMbps -ge 2500) {
-                Write-Host "Applying 2.5 Gbps optimization profile..." -ForegroundColor Yellow
-                netsh int tcp set global rss=enabled
-                netsh int tcp set global autotuninglevel=normal
-                Log "2.5 Gbps profile applied."
-            }
-            elseif ($SpeedMbps -ge 1000) {
-                Write-Host "Applying 1 Gbps optimization profile..." -ForegroundColor Yellow
-                netsh int tcp set global rss=enabled
-                netsh int tcp set global autotuninglevel=normal
-                Log "1 Gbps profile applied."
-            }
-            elseif ($SpeedMbps -ge 100) {
-                Write-Host "Applying 100 Mbps optimization profile..." -ForegroundColor Yellow
-                netsh int tcp set global autotuninglevel=restricted
-                Log "100 Mbps profile applied."
-            }
-            else {
-                Write-Host "Low-speed adapter detected (<100 Mbps). Minimal tuning applied." -ForegroundColor Yellow
-                netsh int tcp set global autotuninglevel=disabled
-                Log "Low-speed profile applied."
+                # Apply tuning based on speed
+                if ($SpeedMbps -ge 10000) {
+                    Write-Host "Applying 10 Gbps optimization profile..." -ForegroundColor Yellow
+                    Log "Running: netsh int tcp set global rss=enabled"
+                    netsh int tcp set global rss=enabled
+                    Log "Running: netsh int tcp set global autotuninglevel=normal"
+                    netsh int tcp set global autotuninglevel=normal
+                    Log "Running: netsh int tcp set global chimney=disabled"
+                    netsh int tcp set global chimney=disabled
+                    Log "10 Gbps profile applied."
+                }
+                elseif ($SpeedMbps -ge 2500) {
+                    Write-Host "Applying 2.5 Gbps optimization profile..." -ForegroundColor Yellow
+                    Log "Running: netsh int tcp set global rss=enabled"
+                    netsh int tcp set global rss=enabled
+                    Log "Running: netsh int tcp set global autotuninglevel=normal"
+                    netsh int tcp set global autotuninglevel=normal
+                    Log "2.5 Gbps profile applied."
+                }
+                elseif ($SpeedMbps -ge 1000) {
+                    Write-Host "Applying 1 Gbps optimization profile..." -ForegroundColor Yellow
+                    Log "Running: netsh int tcp set global rss=enabled"
+                    netsh int tcp set global rss=enabled
+                    Log "Running: netsh int tcp set global autotuninglevel=normal"
+                    netsh int tcp set global autotuninglevel=normal
+                    Log "1 Gbps profile applied."
+                }
+                elseif ($SpeedMbps -ge 100) {
+                    Write-Host "Applying 100 Mbps optimization profile..." -ForegroundColor Yellow
+                    Log "Running: netsh int tcp set global autotuninglevel=restricted"
+                    netsh int tcp set global autotuninglevel=restricted
+                    Log "100 Mbps profile applied."
+                }
+                else {
+                    Write-Host "Low-speed adapter detected (<100 Mbps). Minimal tuning applied." -ForegroundColor Yellow
+                    Log "Running: netsh int tcp set global autotuninglevel=disabled"
+                    netsh int tcp set global autotuninglevel=disabled
+                    Log "Low-speed profile applied."
+                }
+            } catch {
+                Log "Adapter tuning error for $($Adapter.Name): $($_.Exception.Message)"
+                Write-Host "Error tuning adapter $($Adapter.Name): $($_.Exception.Message)" -ForegroundColor Red
             }
         }
     }
     catch {
-        Log "Network auto-optimization error: $_"
+        Log "Network auto-optimization error: $($_.Exception.Message)"
+        Write-Host "Network auto-optimization error: $($_.Exception.Message)" -ForegroundColor Red
     }
 
     Log "Auto Network Optimization Completed."
+    Write-Host "=== Network Optimization Completed ===" -ForegroundColor Green
 }
 
 # =========================
@@ -623,7 +646,7 @@ try {
     Troubleshoot-Issues
     Check-DiskIntegrity
     Debloat-Windows
-    Optimize-Network
+    Optimize-NetworkAuto
     Check-UpdateService
     Check-WindowsUpdates
     Audit-Software
