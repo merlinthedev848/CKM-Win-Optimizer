@@ -17,11 +17,14 @@ Function Log {
 # =========================
 # Feature toggles (set to $false to disable)
 # =========================
-$Global:EnableDebloat     = $true
-$Global:EnableFullScan    = $false   # Defender full scan can be lengthy
-$Global:EnableChkDsk      = $true    # May schedule next boot
-$Global:ClearEventLogs    = $false   # Off by default; turn on if you want to purge
-$Global:DoScheduleTask    = $true
+$Global:EnableDebloat       = $true
+$Global:EnableFullScan      = $false   # Defender full scan can be lengthy
+$Global:EnableChkDsk        = $true    # May schedule next boot
+$Global:ClearEventLogs      = $false   # Off by default; turn on if you want to purge
+$Global:DoScheduleTask      = $true
+$Global:EnableDriverUpdate  = $true    # Automatically update drivers via Windows Update
+$Global:EnableSoftwareUpdate= $true    # Automatically update apps via Winget
+
 
 # =========================
 # Detect OS version and product
