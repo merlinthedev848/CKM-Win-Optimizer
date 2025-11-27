@@ -80,21 +80,34 @@ Function Check-SystemHealth {
 # =========================
 Function Run-SecurityScans {
     Log "Starting Security Scans..."
+
+    # Defender signature update
     Write-Host "=== Updating Windows Defender Signatures ===" -ForegroundColor Yellow
-    try { Update-MpSignature; Log "Defender signatures updated." } catch { Log "Update-MpSignature error: $_" }
+    if (Get-Command Update-MpSignature -ErrorAction SilentlyContinue) {
+        try { Update-MpSignature; Log "Defender signatures updated." }
+        catch { Log "Update-MpSignature error: $_" }
+    } else {
+        Log "Update-MpSignature not available. Skipping signature update."
+    }
 
-    try {
-        if ($Global:EnableFullScan) {
-            Write-Host "=== Running Windows Defender Full Scan ===" -ForegroundColor Yellow
-            Start-MpScan -ScanType FullScan
-            Log "Defender Full Scan Completed."
-        } else {
-            Write-Host "=== Running Windows Defender Quick Scan ===" -ForegroundColor Yellow
-            Start-MpScan -ScanType QuickScan
-            Log "Defender Quick Scan Completed."
-        }
-    } catch { Log "Defender scan error: $_" }
+    # Defender scan
+    if (Get-Command Start-MpScan -ErrorAction SilentlyContinue) {
+        try {
+            if ($Global:EnableFullScan) {
+                Write-Host "=== Running Windows Defender Full Scan ===" -ForegroundColor Yellow
+                Start-MpScan -ScanType FullScan
+                Log "Defender Full Scan Completed."
+            } else {
+                Write-Host "=== Running Windows Defender Quick Scan ===" -ForegroundColor Yellow
+                Start-MpScan -ScanType QuickScan
+                Log "Defender Quick Scan Completed."
+            }
+        } catch { Log "Defender scan error: $_" }
+    } else {
+        Log "Start-MpScan not available. Skipping Defender scan."
+    }
 
+    # Audit services
     Write-Host "Checking manual-start services currently running..." -ForegroundColor Yellow
     try {
         Get-Service | Where-Object { $_.StartType -eq "Manual" -and $_.Status -eq "Running" } | Format-Table -AutoSize
@@ -102,6 +115,7 @@ Function Run-SecurityScans {
 
     Log "Security Scans Completed."
 }
+
 
 # =========================
 # Optimization tasks (cleanup, startup, visuals, power)
