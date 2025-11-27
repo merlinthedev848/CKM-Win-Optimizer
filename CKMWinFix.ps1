@@ -78,33 +78,68 @@ Function Check-SystemHealth {
 # =========================
 # Security scans (Windows Defender)
 # =========================
+Function Ensure-Defender {
+    Log "Checking Windows Defender installation..."
+    try {
+        $DefenderFeature = Get-WindowsOptionalFeature -Online -FeatureName Windows-Defender-Features -ErrorAction SilentlyContinue
+        if ($DefenderFeature.State -ne "Enabled") {
+            Write-Host "Windows Defender is not enabled. Installing..." -ForegroundColor Yellow
+            Enable-WindowsOptionalFeature -Online -FeatureName Windows-Defender-Features -All -NoRestart | Out-Null
+            Log "Windows Defender feature enabled."
+        } else {
+            Log "Windows Defender is already enabled."
+        }
+    } catch {
+        Log "Failed to check/enable Windows Defender: $_"
+    }
+}
+
+Function Run-DefenderCLI {
+    $MpCmd = "C:\ProgramData\Microsoft\Windows Defender\Platform\*\MpCmdRun.exe"
+    $Exe = Get-Item $MpCmd -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if ($Exe) {
+        Write-Host "Running Defender CLI scan..." -ForegroundColor Yellow
+        try {
+            Start-Process $Exe.FullName -ArgumentList "-SignatureUpdate" -Wait
+            if ($Global:EnableFullScan) {
+                Start-Process $Exe.FullName -ArgumentList "-Scan -ScanType 2" -Wait  # 2 = Full
+                Log "Defender Full Scan triggered via MpCmdRun.exe"
+            } else {
+                Start-Process $Exe.FullName -ArgumentList "-Scan -ScanType 1" -Wait  # 1 = Quick
+                Log "Defender Quick Scan triggered via MpCmdRun.exe"
+            }
+        } catch {
+            Log "Defender CLI scan error: $_"
+        }
+    } else {
+        Log "MpCmdRun.exe not found. Windows Defender may not be installed. Skipping scan."
+    }
+}
+
 Function Run-SecurityScans {
     Log "Starting Security Scans..."
 
-    # Defender signature update
-    Write-Host "=== Updating Windows Defender Signatures ===" -ForegroundColor Yellow
-    if (Get-Command Update-MpSignature -ErrorAction SilentlyContinue) {
-        try { Update-MpSignature; Log "Defender signatures updated." }
-        catch { Log "Update-MpSignature error: $_" }
-    } else {
-        Log "Update-MpSignature not available. Skipping signature update."
-    }
+    # Path to Defender CLI
+    $MpCmd = "C:\ProgramData\Microsoft\Windows Defender\Platform\*\MpCmdRun.exe"
+    $Exe = Get-Item $MpCmd -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 
-    # Defender scan
-    if (Get-Command Start-MpScan -ErrorAction SilentlyContinue) {
+    if ($Exe) {
+        Write-Host "=== Updating Windows Defender Signatures (CLI) ===" -ForegroundColor Yellow
+        try { Start-Process $Exe.FullName -ArgumentList "-SignatureUpdate" -Wait; Log "Defender signatures updated via CLI." }
+        catch { Log "Defender signature update error: $_" }
+
+        Write-Host "=== Running Windows Defender Scan (CLI) ===" -ForegroundColor Yellow
         try {
             if ($Global:EnableFullScan) {
-                Write-Host "=== Running Windows Defender Full Scan ===" -ForegroundColor Yellow
-                Start-MpScan -ScanType FullScan
-                Log "Defender Full Scan Completed."
+                Start-Process $Exe.FullName -ArgumentList "-Scan -ScanType 2" -Wait  # 2 = Full
+                Log "Defender Full Scan triggered via CLI."
             } else {
-                Write-Host "=== Running Windows Defender Quick Scan ===" -ForegroundColor Yellow
-                Start-MpScan -ScanType QuickScan
-                Log "Defender Quick Scan Completed."
+                Start-Process $Exe.FullName -ArgumentList "-Scan -ScanType 1" -Wait  # 1 = Quick
+                Log "Defender Quick Scan triggered via CLI."
             }
-        } catch { Log "Defender scan error: $_" }
+        } catch { Log "Defender CLI scan error: $_" }
     } else {
-        Log "Start-MpScan not available. Skipping Defender scan."
+        Log "Windows Defender CLI not found. Skipping Defender scan."
     }
 
     # Audit services
@@ -115,6 +150,9 @@ Function Run-SecurityScans {
 
     Log "Security Scans Completed."
 }
+
+
+
 
 
 # =========================
