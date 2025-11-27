@@ -11,7 +11,7 @@ The script is OS-aware: it detects whether it is running on Windows 10 or Window
 *Novice Users*
 ```
 Download the zip file and move the folder to your desk top 
-Double click on the Run-CKMWinFix.bat file 
+Right click on the Run-CKMWinFix.bat file and run as Administrator
 Follow the prompts :)
 ```
 
