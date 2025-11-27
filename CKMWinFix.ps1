@@ -116,6 +116,44 @@ Function Fix-SystemPermissions {
 }
 
 # =========================
+# Disk Optimization (Defrag HDDs, TRIM SSDs)
+# =========================
+Function Optimize-Storage {
+    Log "Starting Storage Optimization..."
+    Write-Host "=== Detecting Storage Devices ===" -ForegroundColor Yellow
+
+    try {
+        $Disks = Get-PhysicalDisk -Verbose
+        foreach ($Disk in $Disks) {
+            Write-Host "Disk: $($Disk.FriendlyName)" -ForegroundColor Cyan
+            Write-Host "Media Type: $($Disk.MediaType)" -ForegroundColor Green
+            Log "Detected disk: $($Disk.FriendlyName) [$($Disk.MediaType)]"
+
+            if ($Disk.MediaType -eq "HDD") {
+                Write-Host "Running defrag on HDD..." -ForegroundColor Yellow
+                Optimize-Volume -DriveLetter $Disk.DeviceID -Defrag -Verbose
+                Log "Defrag completed on $($Disk.FriendlyName)"
+            }
+            elseif ($Disk.MediaType -eq "SSD") {
+                Write-Host "Running TRIM optimization on SSD..." -ForegroundColor Yellow
+                Optimize-Volume -DriveLetter $Disk.DeviceID -ReTrim -Verbose
+                Log "TRIM optimization completed on $($Disk.FriendlyName)"
+            }
+            else {
+                Write-Host "Skipping unknown media type: $($Disk.MediaType)" -ForegroundColor Yellow
+                Log "Skipped disk $($Disk.FriendlyName) (unknown type)"
+            }
+        }
+    } catch {
+        Log "Storage optimization error: $($_.Exception.Message)"
+        Write-Host "Error during storage optimization: $($_.Exception.Message)" -ForegroundColor Red
+    }
+
+    Log "Storage Optimization Completed."
+    Write-Host "=== Storage Optimization Completed ===" -ForegroundColor Green
+}
+
+# =========================
 # Security scans (Windows Defender)
 # =========================
 Function Ensure-Defender {
