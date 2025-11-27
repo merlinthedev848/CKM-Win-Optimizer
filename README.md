@@ -74,15 +74,15 @@ The script is OS-aware: it detects whether it is running on Windows 10 or Window
    Set-ExecutionPolicy RemoteSigned -Scope CurrentUser```    
 
 
-Run the Script Manually:
+**Run the Script Manually:**
 ```.\CKMWinFix.ps1```
 
-On first run, it will:
+**On first run, it will:**
  - Perform all checks, fixes, and optimizations
  - Log results to Logs\HealthCheckLog_<timestamp>.txt
  - Register a scheduled task named AutomatedSystemHealthCheck to run daily at 3:00AM
 
-Configuration
+**Configuration**
 At the top of the script, you can toggle features:
 ``` $Global:EnableDebloat     = $true    # Disable if you want to keep all built-in apps
  $Global:EnableFullScan    = $false   # Set true for full Defender scan
@@ -91,17 +91,17 @@ At the top of the script, you can toggle features:
  $Global:DoScheduleTask    = $true    # Disable if you don't want scheduled automation
 ```
 
-Logs
+**Logs**
  - Logs are stored in the Logs folder alongside the script.
  - Each run generates a timestamped log file.
  - Backup operations also append to the log.
 
-Notes
+**Notes**
  - CHKDSK: If the system drive is in use, CHKDSK will schedule itself for the next reboot.
  - Debloat: The script keeps essential apps (Store, Calculator, Notepad, Photos). Adjust the whitelist if you want to retain more.
  - Networking tweaks: RSS/autotuning are generally beneficial; chimney offload depends on NIC/driver support.
  - Windows Update: If PSWindowsUpdate is not installed, the script uses UsoClient commands.
 
-Disclaimer
+**Disclaimer**
 This script makes system-level changes. Test in a non-production environment first. 
 Use at your own risk — while designed to fix 99.9% of common issues, no script can guarantee absolute coverage of all possible problems
