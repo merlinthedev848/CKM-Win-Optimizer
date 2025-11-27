@@ -10,11 +10,9 @@ The script is OS-aware: it detects whether it is running on Windows 10 or Window
 ```git clone https://github.com/merlinthedev848/CKM-Win-Optimizer.git
 cd CKM-Win-Optimizer
 Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
-.\CKMWinFix.ps1```
-
-
---
-
+.\CKMWinFix.ps1
+```
+----
 ## Features
 - **System Health Monitoring**
   - CPU, RAM, and disk usage reporting
@@ -77,12 +75,14 @@ Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 ## Installation
 1. Save the script as `CKMWinFix.ps1` in a folder of your choice (e.g., `C:\Scripts\CKMWinFix.ps1`).
 2. Ensure PowerShell execution policy allows running scripts:
-   ```powershell
-   Set-ExecutionPolicy RemoteSigned -Scope CurrentUser```    
+   ```
+   powershell Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+   ```    
 
 
 **Run the Script Manually:**
-```.\CKMWinFix.ps1```
+```.\CKMWinFix.ps1
+```
 
 **On first run, it will:**
  - Perform all checks, fixes, and optimizations
@@ -91,7 +91,8 @@ Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 **Configuration**
 At the top of the script, you can toggle features:
-``` $Global:EnableDebloat     = $true    # Disable if you want to keep all built-in apps
+```
+ $Global:EnableDebloat     = $true    # Disable if you want to keep all built-in apps
  $Global:EnableFullScan    = $false   # Set true for full Defender scan
  $Global:EnableChkDsk      = $true    # Disable if you don't want CHKDSK
  $Global:ClearEventLogs    = $false   # Enable to purge event logs
