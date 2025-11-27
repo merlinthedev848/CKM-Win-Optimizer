@@ -528,7 +528,7 @@ Function Debloat-Windows {
 
 
 # =========================
-# Network optimization (capability + fallback + visual speedtest)
+# Network optimization (capability + fallback + visual speedtest + log export)
 # =========================
 Function Optimize-NetworkAuto {
     Log "Starting Auto Network Optimization..."
@@ -602,6 +602,16 @@ Function Optimize-NetworkAuto {
             Write-Host ("{0,-20} {1,6} Mbps | {2}" -f $Result.Adapter, $Result.SpeedMbps, $BarString) -ForegroundColor Cyan
         }
 
+        # Log export of summary + chart
+        Add-Content -Path $LogFile -Value "`n=== Speedtest Summary ==="
+        $Results | Out-String | Add-Content -Path $LogFile
+        Add-Content -Path $LogFile -Value "`n=== Speedtest Visual ==="
+        foreach ($Result in $Results) {
+            $Bars = [math]::Round($Result.SpeedMbps / 100)
+            $BarString = ("█" * $Bars)
+            Add-Content -Path $LogFile -Value ("{0,-20} {1,6} Mbps | {2}" -f $Result.Adapter, $Result.SpeedMbps, $BarString)
+        }
+
     } catch {
         Log "Network auto-optimization error: $($_.Exception.Message)"
         Write-Host "Network auto-optimization error: $($_.Exception.Message)" -ForegroundColor Red
@@ -610,6 +620,8 @@ Function Optimize-NetworkAuto {
     Log "Auto Network Optimization Completed."
     Write-Host "=== Network Optimization Completed ===" -ForegroundColor Green
 }
+
+
 
 # =========================
 # Windows Update service health
