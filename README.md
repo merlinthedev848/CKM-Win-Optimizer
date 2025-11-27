@@ -7,6 +7,14 @@ It combines system health checks, security scans, disk repair, junk cleanup, deb
 The script is OS-aware: it detects whether it is running on Windows 10 or Windows 11 and applies the appropriate debloat and optimization steps for each.
 
 **Quick start**
+*Novice Users*
+Download the zip file and move the folder to your desk top 
+Double click on the Run-CKMWinFix.bat file 
+
+Follow the prompts :)
+
+
+*Advanced Users*
 ```git clone https://github.com/merlinthedev848/CKM-Win-Optimizer.git
 cd CKM-Win-Optimizer
 Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
