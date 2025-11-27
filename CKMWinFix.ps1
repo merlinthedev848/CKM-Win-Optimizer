@@ -213,17 +213,37 @@ Function Optimize-System {
 # =========================
 Function Troubleshoot-Issues {
     Log "Starting Troubleshooting..."
-    Write-Host "Running System File Checker..." -ForegroundColor Yellow
-    try { sfc /scannow | Out-Null; Log "SFC completed." } catch { Log "SFC error: $_" }
 
-    Write-Host "Running DISM RestoreHealth..." -ForegroundColor Yellow
-    try { DISM /Online /Cleanup-Image /RestoreHealth | Out-Null; Log "DISM completed." } catch { Log "DISM error: $_" }
+    # System File Checker
+    Write-Host "=== Running System File Checker (SFC /scannow) ===" -ForegroundColor Yellow
+    $StartTime = Get-Date
+    try {
+        # Run SFC and stream output directly to console
+        cmd /c "sfc /scannow"
+        $EndTime = Get-Date
+        $Duration = $EndTime - $StartTime
+        Write-Host "SFC completed in $($Duration.Minutes)m $($Duration.Seconds)s" -ForegroundColor Green
+        Log "SFC completed in $($Duration.Minutes)m $($Duration.Seconds)s."
+    } catch { Log "SFC error: $_" }
 
-    Write-Host "Flushing DNS Cache..." -ForegroundColor Yellow
-    try { ipconfig /flushdns | Out-Null } catch {}
+    # DISM RestoreHealth
+    Write-Host "=== Running DISM /RestoreHealth ===" -ForegroundColor Yellow
+    $StartTime = Get-Date
+    try {
+        cmd /c "DISM /Online /Cleanup-Image /RestoreHealth"
+        $EndTime = Get-Date
+        $Duration = $EndTime - $StartTime
+        Write-Host "DISM completed in $($Duration.Minutes)m $($Duration.Seconds)s" -ForegroundColor Green
+        Log "DISM completed in $($Duration.Minutes)m $($Duration.Seconds)s."
+    } catch { Log "DISM error: $_" }
+
+    # DNS Flush
+    Write-Host "=== Flushing DNS Cache ===" -ForegroundColor Yellow
+    try { ipconfig /flushdns | Out-Host; Log "DNS cache flushed." } catch { Log "DNS flush error: $_" }
 
     Log "Troubleshooting Completed."
 }
+
 
 # =========================
 # Disk integrity (CHKDSK)
@@ -231,21 +251,19 @@ Function Troubleshoot-Issues {
 Function Check-DiskIntegrity {
     if ($Global:EnableChkDsk) {
         Log "Checking Disk Integrity (CHKDSK)..."
-        Write-Host "Running CHKDSK on C: (verbose mode, may require reboot)..." -ForegroundColor Yellow
+        Write-Host "=== Running CHKDSK on C: (verbose mode, may require reboot) ===" -ForegroundColor Yellow
 
         try {
             $StartTime = Get-Date
             Write-Host "CHKDSK started at $StartTime" -ForegroundColor Cyan
 
-            # Run CHKDSK with verbose output so user sees stage progress
-            Start-Process -FilePath "cmd.exe" -ArgumentList "/c chkdsk C: /F /R /V" -Wait
+            # Run CHKDSK and stream verbose output directly to console
+            cmd /c "chkdsk C: /F /R /V"
 
             $EndTime = Get-Date
             $Duration = $EndTime - $StartTime
-
             Write-Host "CHKDSK finished at $EndTime" -ForegroundColor Green
             Write-Host "Total runtime: $($Duration.Hours)h $($Duration.Minutes)m $($Duration.Seconds)s" -ForegroundColor Green
-
             Log "CHKDSK completed in $($Duration.Hours)h $($Duration.Minutes)m $($Duration.Seconds)s."
         } catch {
             Log "CHKDSK error: $_"
@@ -254,7 +272,6 @@ Function Check-DiskIntegrity {
         Log "CHKDSK disabled by toggle."
     }
 }
-
 
 # =========================
 # Windows updates (PSWindowsUpdate or USOClient fallback)
