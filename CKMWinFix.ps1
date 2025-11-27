@@ -61,7 +61,7 @@ Function Check-SystemHealth {
         $RAMUsage = [math]::Round((($RAMTotal - $RAMFree) / $RAMTotal) * 100, 2)
 
         Write-Host "CPU Usage: $([math]::Round($CPU,2))%" -ForegroundColor Green
-        Write-Host "Memory Usage: $RAMUsage% ($RAMFree MB free of $RAMTotal MB)" -ForegroundColor Green
+        Write-Host "Memory Usage: $RAMUsage% ($RAMFree GB free of $RAMTotal GB)" -ForegroundColor Green
     } catch { Log "Health counters error: $_" }
 
     try {
