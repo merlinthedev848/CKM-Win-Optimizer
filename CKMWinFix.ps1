@@ -528,69 +528,73 @@ Function Debloat-Windows {
 
 
 # =========================
-# Network optimization (stack reset + NIC tuning, verbose)
+# Network optimization (capability + fallback + visual)
 # =========================
 Function Optimize-NetworkAuto {
     Log "Starting Auto Network Optimization..."
-    Write-Host "=== Detecting Network Adapter Speed ===" -ForegroundColor Yellow
+    Write-Host "=== Detecting Network Adapter Capability ===" -ForegroundColor Yellow
+
+    $Results = @()
 
     try {
-        # Get all active network adapters with a valid Speed property
-        $Adapters = Get-CimInstance Win32_NetworkAdapter -Verbose | Where-Object { $_.NetEnabled -eq $true -and $_.Speed -gt 0 }
+        $Adapters = Get-CimInstance Win32_NetworkAdapter -Verbose | Where-Object { $_.NetEnabled -eq $true }
 
         foreach ($Adapter in $Adapters) {
-            try {
-                $SpeedMbps = [math]::Round($Adapter.Speed / 1MB)  # Convert bits/sec to Mbps
-                Write-Host "Adapter: $($Adapter.Name)" -ForegroundColor Cyan
-                Write-Host "Detected Speed: $SpeedMbps Mbps" -ForegroundColor Green
-                Log "Adapter $($Adapter.Name) speed detected: $SpeedMbps Mbps"
+            $NegotiatedMbps = [math]::Round($Adapter.Speed / 1e6)
+            $Desc = $Adapter.Description
+            $Profile = "Conservative"
 
-                # Apply tuning based on speed
-                if ($SpeedMbps -ge 10000) {
-                    Write-Host "Applying 10 Gbps optimization profile..." -ForegroundColor Yellow
-                    Log "Running: netsh int tcp set global rss=enabled"
-                    netsh int tcp set global rss=enabled
-                    Log "Running: netsh int tcp set global autotuninglevel=normal"
-                    netsh int tcp set global autotuninglevel=normal
-                    Log "Running: netsh int tcp set global chimney=disabled"
-                    netsh int tcp set global chimney=disabled
-                    Log "10 Gbps profile applied."
-                }
-                elseif ($SpeedMbps -ge 2500) {
-                    Write-Host "Applying 2.5 Gbps optimization profile..." -ForegroundColor Yellow
-                    Log "Running: netsh int tcp set global rss=enabled"
-                    netsh int tcp set global rss=enabled
-                    Log "Running: netsh int tcp set global autotuninglevel=normal"
-                    netsh int tcp set global autotuninglevel=normal
-                    Log "2.5 Gbps profile applied."
-                }
-                elseif ($SpeedMbps -ge 1000) {
-                    Write-Host "Applying 1 Gbps optimization profile..." -ForegroundColor Yellow
-                    Log "Running: netsh int tcp set global rss=enabled"
-                    netsh int tcp set global rss=enabled
-                    Log "Running: netsh int tcp set global autotuninglevel=normal"
-                    netsh int tcp set global autotuninglevel=normal
-                    Log "1 Gbps profile applied."
-                }
-                elseif ($SpeedMbps -ge 100) {
-                    Write-Host "Applying 100 Mbps optimization profile..." -ForegroundColor Yellow
-                    Log "Running: netsh int tcp set global autotuninglevel=restricted"
-                    netsh int tcp set global autotuninglevel=restricted
-                    Log "100 Mbps profile applied."
-                }
-                else {
-                    Write-Host "Low-speed adapter detected (<100 Mbps). Minimal tuning applied." -ForegroundColor Yellow
-                    Log "Running: netsh int tcp set global autotuninglevel=disabled"
-                    netsh int tcp set global autotuninglevel=disabled
-                    Log "Low-speed profile applied."
-                }
-            } catch {
-                Log "Adapter tuning error for $($Adapter.Name): $($_.Exception.Message)"
-                Write-Host "Error tuning adapter $($Adapter.Name): $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host "Adapter: $($Adapter.Name)" -ForegroundColor Cyan
+            Write-Host "Description: $Desc" -ForegroundColor Cyan
+            Write-Host "Negotiated Speed: $NegotiatedMbps Mbps" -ForegroundColor Green
+            Log "Adapter $($Adapter.Name) negotiated speed: $NegotiatedMbps Mbps"
+
+            # Capability detection
+            if ($Desc -match "10G" -or $Desc -match "10000") {
+                $Profile = "10 Gbps"
+                netsh int tcp set global rss=enabled
+                netsh int tcp set global autotuninglevel=normal
+                netsh int tcp set global chimney=disabled
+            }
+            elseif ($Desc -match "2.5G" -or $Desc -match "2500") {
+                $Profile = "2.5 Gbps"
+                netsh int tcp set global rss=enabled
+                netsh int tcp set global autotuninglevel=normal
+            }
+            elseif ($Desc -match "1G" -or $Desc -match "1000") {
+                $Profile = "1 Gbps"
+                netsh int tcp set global rss=enabled
+                netsh int tcp set global autotuninglevel=normal
+            }
+            elseif ($Desc -match "100M" -or $Desc -match "Fast Ethernet") {
+                $Profile = "100 Mbps"
+                netsh int tcp set global autotuninglevel=restricted
+            }
+            else {
+                # Fallback: normalize negotiated speed
+                if ($NegotiatedMbps -ge 950 -and $NegotiatedMbps -lt 1250) { $Profile = "1 Gbps" }
+                elseif ($NegotiatedMbps -ge 2400 -and $NegotiatedMbps -lt 2600) { $Profile = "2.5 Gbps" }
+                elseif ($NegotiatedMbps -ge 9500) { $Profile = "10 Gbps" }
+                elseif ($NegotiatedMbps -ge 100) { $Profile = "100 Mbps" }
+                else { $Profile = "Low-speed" }
+
+                Write-Host "Fallback applied: $Profile profile" -ForegroundColor Yellow
+            }
+
+            Log "Profile applied: $Profile"
+            $Results += [PSCustomObject]@{
+                Adapter   = $Adapter.Name
+                Desc      = $Desc
+                SpeedMbps = $NegotiatedMbps
+                Profile   = $Profile
             }
         }
-    }
-    catch {
+
+        # Visual "speedtest" summary
+        Write-Host "`n=== Speedtest Visual ===" -ForegroundColor Magenta
+        $Results | Format-Table Adapter, SpeedMbps, Profile -AutoSize
+
+    } catch {
         Log "Network auto-optimization error: $($_.Exception.Message)"
         Write-Host "Network auto-optimization error: $($_.Exception.Message)" -ForegroundColor Red
     }
