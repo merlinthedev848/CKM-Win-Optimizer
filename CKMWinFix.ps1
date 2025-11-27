@@ -151,10 +151,6 @@ Function Run-SecurityScans {
     Log "Security Scans Completed."
 }
 
-
-
-
-
 # =========================
 # Optimization tasks (cleanup, startup, visuals, power)
 # =========================
@@ -383,6 +379,10 @@ Function Analyze-EventLogs {
     Log "Event Log Analysis Completed."
 }
 
+# =========================
+# Debloat Windows Apps
+# =========================
+
 Function Debloat-Windows {
     if (-not $Global:EnableDebloat) { Log "Debloat disabled."; return }
 
@@ -400,47 +400,45 @@ Function Debloat-Windows {
             "Microsoft.Windows.Photos"
         )
 
-        if ($ProductName -like "*Windows 10*") {
-            Get-AppxPackage -AllUsers | Where-Object { $ProtectedApps -notcontains $_.Name } | ForEach-Object {
-                try {
-                    Remove-AppxPackage -Package $_.PackageFullName -AllUsers -ErrorAction SilentlyContinue
-                    Log "Removed: $($_.Name)"
-                } catch {
-                    Log "Failed to remove: $($_.Name) - $_"
-                }
+        $Apps = Get-AppxPackage -AllUsers | Where-Object { $ProtectedApps -notcontains $_.Name }
+        $Total = $Apps.Count
+        $i = 0
+
+        foreach ($App in $Apps) {
+            $i++
+            $Percent = [math]::Round(($i / $Total) * 100, 0)
+            Write-Progress -Activity "Debloating Windows" -Status "Removing $($App.Name)" -PercentComplete $Percent
+
+            try {
+                Remove-AppxPackage -Package $App.PackageFullName -AllUsers -ErrorAction SilentlyContinue
+                Log "Removed: $($App.Name)"
+            } catch {
+                Log "Failed to remove: $($App.Name) - $_"
             }
+        }
+
+        # OS-specific tweaks
+        if ($ProductName -like "*Windows 10*") {
             # Disable Cortana
             New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" -Force | Out-Null
             Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" -Name "AllowCortana" -Value 0 -Type DWord -ErrorAction SilentlyContinue
         }
         elseif ($ProductName -like "*Windows 11*") {
-            Get-AppxPackage -AllUsers | Where-Object { $ProtectedApps -notcontains $_.Name } | ForEach-Object {
-                if ($_.Name -like "*WebExperience*" -or $_.Name -like "*MicrosoftTeams*" -or $_.Name -like "*YourPhone*") {
-                    try {
-                        Remove-AppxPackage -Package $_.PackageFullName -AllUsers -ErrorAction SilentlyContinue
-                        Log "Removed: $($_.Name)"
-                    } catch {
-                        Log "Failed to remove: $($_.Name) - $_"
-                    }
+            # Targeted removals
+            Get-AppxPackage -AllUsers | Where-Object { $_.Name -like "*WebExperience*" -or $_.Name -like "*MicrosoftTeams*" -or $_.Name -like "*YourPhone*" } | ForEach-Object {
+                try {
+                    Remove-AppxPackage -Package $_.PackageFullName -AllUsers -ErrorAction SilentlyContinue
+                    Log "Removed: $($_.Name)"
+                } catch {
+                    Log "Failed to remove: $($_.Name) - $_"
                 }
             }
             # Disable Transparency (Win11 UI)
             New-Item -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Force | Out-Null
             Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name "EnableTransparency" -Value 0 -Type DWord -ErrorAction SilentlyContinue
         }
-        else {
-            Log "Unknown Windows version; applying generic debloat keep list."
-            Get-AppxPackage -AllUsers | Where-Object { $ProtectedApps -notcontains $_.Name } | ForEach-Object {
-                try {
-                    Remove-AppxPackage -Package $_.PackageFullName -AllUsers -ErrorAction SilentlyContinue
-                    Log "Removed: $($_.Name)"
-                } catch {
-                    Log "Failed to remove: $($_.Name) - $_"
-                }
-            }
-        }
 
-        # Common telemetry and background apps off (both OSes)
+        # Common telemetry and background apps off
         New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Force | Out-Null
         Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "AllowTelemetry" -Value 0 -Type DWord -ErrorAction SilentlyContinue
 
@@ -448,6 +446,7 @@ Function Debloat-Windows {
         Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications" -Name "GlobalUserDisabled" -Value 1 -Type DWord -ErrorAction SilentlyContinue
     } catch { Log "Debloat error: $_" }
 
+    Write-Progress -Activity "Debloating Windows" -Completed
     Log "Debloat Completed."
 }
 
