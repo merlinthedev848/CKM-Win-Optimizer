@@ -453,23 +453,56 @@ Function Debloat-Windows {
 # =========================
 # Network optimization (stack reset + NIC tuning)
 # =========================
-Function Optimize-Network {
-    Log "Optimizing Network..."
+Function Optimize-NetworkAuto {
+    Log "Starting Auto Network Optimization..."
+    Write-Host "=== Detecting Network Adapter Speed ===" -ForegroundColor Yellow
+
     try {
-        ipconfig /flushdns | Out-Null
-        netsh winsock reset | Out-Null
-        netsh int ip reset | Out-Null
+        # Get all active network adapters
+        $Adapters = Get-CimInstance Win32_NetworkAdapter | Where-Object { $_.NetEnabled -eq $true }
 
-        # TCP global settings: generally safe defaults
-        netsh int tcp set global rss=enabled
-        netsh int tcp set global autotuninglevel=normal
-        netsh int tcp set global ecncapability=disabled
+        foreach ($Adapter in $Adapters) {
+            $SpeedMbps = [math]::Round($Adapter.Speed / 1MB)  # Convert bits/sec to Mbps
+            Write-Host "Adapter: $($Adapter.Name)" -ForegroundColor Cyan
+            Write-Host "Detected Speed: $SpeedMbps Mbps" -ForegroundColor Green
 
-        # Chimney offload depends on NIC/driver; enable and log any issue silently
-        netsh int tcp set global chimney=enabled
+            # Apply tuning based on speed
+            if ($SpeedMbps -ge 10000) {
+                Write-Host "Applying 10 Gbps optimization profile..." -ForegroundColor Yellow
+                netsh int tcp set global rss=enabled
+                netsh int tcp set global autotuninglevel=normal
+                netsh int tcp set global chimney=disabled
+                Log "10 Gbps profile applied."
+            }
+            elseif ($SpeedMbps -ge 2500) {
+                Write-Host "Applying 2.5 Gbps optimization profile..." -ForegroundColor Yellow
+                netsh int tcp set global rss=enabled
+                netsh int tcp set global autotuninglevel=normal
+                Log "2.5 Gbps profile applied."
+            }
+            elseif ($SpeedMbps -ge 1000) {
+                Write-Host "Applying 1 Gbps optimization profile..." -ForegroundColor Yellow
+                netsh int tcp set global rss=enabled
+                netsh int tcp set global autotuninglevel=normal
+                Log "1 Gbps profile applied."
+            }
+            elseif ($SpeedMbps -ge 100) {
+                Write-Host "Applying 100 Mbps optimization profile..." -ForegroundColor Yellow
+                netsh int tcp set global autotuninglevel=restricted
+                Log "100 Mbps profile applied."
+            }
+            else {
+                Write-Host "Low-speed adapter detected (<100 Mbps). Minimal tuning applied." -ForegroundColor Yellow
+                netsh int tcp set global autotuninglevel=disabled
+                Log "Low-speed profile applied."
+            }
+        }
+    }
+    catch {
+        Log "Network auto-optimization error: $_"
+    }
 
-        Log "Network stack reset and TCP globals tuned."
-    } catch { Log "Network optimization error: $_" }
+    Log "Auto Network Optimization Completed."
 }
 
 # =========================
