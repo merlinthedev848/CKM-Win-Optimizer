@@ -1,4 +1,4 @@
-# CKMWinFix.ps1
+# CKMWinFix 
 
 ## Overview
 **CKMWinFix.ps1** is an all-in-one Windows optimization and repair script designed to automatically diagnose, fix, clean, and optimize Windows 10 and Windows 11 systems.  
@@ -6,7 +6,14 @@ It combines system health checks, security scans, disk repair, junk cleanup, deb
 
 The script is OS-aware: it detects whether it is running on Windows 10 or Windows 11 and applies the appropriate debloat and optimization steps for each.
 
----
+**Quick start**
+```git clone https://github.com/merlinthedev848/CKM-Win-Optimizer.git
+cd CKM-Win-Optimizer
+Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+.\CKMWinFix.ps1```
+
+
+--
 
 ## Features
 - **System Health Monitoring**
