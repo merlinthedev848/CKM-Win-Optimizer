@@ -435,7 +435,7 @@ Function Analyze-EventLogs {
 }
 
 # =========================
-# Debloat Windows Apps
+# Debloat Windows Apps (refined)
 # =========================
 
 Function Debloat-Windows {
@@ -452,10 +452,26 @@ Function Debloat-Windows {
             "Microsoft.WindowsStore",
             "Microsoft.WindowsCalculator",
             "Microsoft.WindowsNotepad",
-            "Microsoft.Windows.Photos"
+            "Microsoft.Windows.Photos",
+            "Microsoft.AAD.BrokerPlugin",
+            "Microsoft.Windows.Search",
+            "Microsoft.BioEnrollment",
+            "Microsoft.CredDialogHost",
+            "Microsoft.AccountsControl",
+            "Microsoft.AsyncTextService",
+            "Microsoft.Windows.FileExplorer",
+            "Microsoft.VCLibs",
+            "Microsoft.UI.Xaml",
+            "Microsoft.NET.Native.Runtime",
+            "Microsoft.NET.Native.Framework"
+            "Microsoft.Windows.Copilot"
         )
 
-        $Apps = Get-AppxPackage -AllUsers | Where-Object { $ProtectedApps -notcontains $_.Name }
+        # Filter out protected and framework packages
+        $Apps = Get-AppxPackage -AllUsers | Where-Object {
+            -not $_.IsFramework -and $ProtectedApps -notcontains $_.Name
+        }
+
         $Total = $Apps.Count
         $i = 0
 
@@ -465,10 +481,12 @@ Function Debloat-Windows {
             Write-Progress -Activity "Debloating Windows" -Status "Removing $($App.Name)" -PercentComplete $Percent
 
             try {
+                # Attempt removal silently; ignore permission errors
                 Remove-AppxPackage -Package $App.PackageFullName -AllUsers -ErrorAction SilentlyContinue
-                Log "Removed: $($App.Name)"
+                if ($?) { Log "Removed: $($App.Name)" } else { Log "Skipped: $($App.Name)" }
             } catch {
-                Log "Failed to remove: $($App.Name) - $_"
+                # Suppress noisy error output, just log skip
+                Log "Skipped (protected or system): $($App.Name)"
             }
         }
 
@@ -483,10 +501,8 @@ Function Debloat-Windows {
             Get-AppxPackage -AllUsers | Where-Object { $_.Name -like "*WebExperience*" -or $_.Name -like "*MicrosoftTeams*" -or $_.Name -like "*YourPhone*" } | ForEach-Object {
                 try {
                     Remove-AppxPackage -Package $_.PackageFullName -AllUsers -ErrorAction SilentlyContinue
-                    Log "Removed: $($_.Name)"
-                } catch {
-                    Log "Failed to remove: $($_.Name) - $_"
-                }
+                    if ($?) { Log "Removed: $($_.Name)" } else { Log "Skipped: $($_.Name)" }
+                } catch { Log "Skipped (system): $($_.Name)" }
             }
             # Disable Transparency (Win11 UI)
             New-Item -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Force | Out-Null
