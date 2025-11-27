@@ -174,12 +174,16 @@ Function Optimize-Storage {
                 Log "Skipped disk $($Disk.FriendlyName) (unknown type)"
             }
         }
+
         Write-Host "`n=== Storage Visual ===" -ForegroundColor Magenta
         Add-Content -Path $LogFile -Value "`n=== Storage Visual ==="
         foreach ($Disk in $Disks) {
-            $Bars = if ($Disk.MediaType -eq "HDD") { 20 } elseif ($Disk.MediaType -eq "SSD") { 30 } else { 10 }
+            $Bars = if ($Disk.MediaType -eq "HDD") { 20 }
+                    elseif ($Disk.MediaType -eq "SSD") { 30 }
+                    else { 10 }   # fallback for unknown types
+
             $BarString = ($Global:BarChar * $Bars)
-                        $Line = ("{0,-20} {1,-10} | {2}" -f $Disk.FriendlyName, $Disk.MediaType, $BarString)
+            $Line = ("{0,-20} {1,-10} | {2}" -f $Disk.FriendlyName, $Disk.MediaType, $BarString)
             Write-Host $Line -ForegroundColor Cyan
             Add-Content -Path $LogFile -Value $Line
         }
@@ -251,4 +255,5 @@ Function Write-FinalSummary {
     Add-Content -Path $LogFile -Value " Script Execution Completed Successfully"
     Add-Content -Path $LogFile -Value "-------------------------------------------------------------------------------"
 }
+
 
