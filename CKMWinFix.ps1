@@ -231,15 +231,30 @@ Function Troubleshoot-Issues {
 Function Check-DiskIntegrity {
     if ($Global:EnableChkDsk) {
         Log "Checking Disk Integrity (CHKDSK)..."
-        Write-Host "Running CHKDSK on C: (may require reboot)..." -ForegroundColor Yellow
+        Write-Host "Running CHKDSK on C: (verbose mode, may require reboot)..." -ForegroundColor Yellow
+
         try {
-            chkdsk C: /F /R | Out-Null
-            Log "CHKDSK scheduled/completed. If locked, it will run at next boot."
-        } catch { Log "CHKDSK error: $_" }
+            $StartTime = Get-Date
+            Write-Host "CHKDSK started at $StartTime" -ForegroundColor Cyan
+
+            # Run CHKDSK with verbose output so user sees stage progress
+            Start-Process -FilePath "cmd.exe" -ArgumentList "/c chkdsk C: /F /R /V" -Wait
+
+            $EndTime = Get-Date
+            $Duration = $EndTime - $StartTime
+
+            Write-Host "CHKDSK finished at $EndTime" -ForegroundColor Green
+            Write-Host "Total runtime: $($Duration.Hours)h $($Duration.Minutes)m $($Duration.Seconds)s" -ForegroundColor Green
+
+            Log "CHKDSK completed in $($Duration.Hours)h $($Duration.Minutes)m $($Duration.Seconds)s."
+        } catch {
+            Log "CHKDSK error: $_"
+        }
     } else {
         Log "CHKDSK disabled by toggle."
     }
 }
+
 
 # =========================
 # Windows updates (PSWindowsUpdate or USOClient fallback)
