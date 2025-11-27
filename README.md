@@ -51,6 +51,9 @@ Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
   - Disables non-Microsoft startup items
   - Sets High Performance power plan
   - Trims visual effects for speed
+ 
+- **Drivers and Softwares**
+ - Auto scans and updates any available drivers and softwares (Can be disabled if need be)
 
 - **Networking**
   - Flushes DNS cache
