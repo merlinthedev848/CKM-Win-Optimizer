@@ -84,11 +84,11 @@ On first run, it will:
 
 Configuration
 At the top of the script, you can toggle features:
- $Global:EnableDebloat     = $true    # Disable if you want to keep all built-in apps
+``` $Global:EnableDebloat     = $true    # Disable if you want to keep all built-in apps
  $Global:EnableFullScan    = $false   # Set true for full Defender scan
  $Global:EnableChkDsk      = $true    # Disable if you don't want CHKDSK
  $Global:ClearEventLogs    = $false   # Enable to purge event logs
- $Global:DoScheduleTask    = $true    # Disable if you don't want scheduled automation
+ $Global:DoScheduleTask    = $true    # Disable if you don't want scheduled automation```
 
 Logs
  - Logs are stored in the Logs folder alongside the script.
