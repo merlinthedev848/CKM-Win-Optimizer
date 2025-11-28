@@ -7,8 +7,11 @@ chcp 65001 > $null
 # Define a global bar character (ASCII fallback)
 $Global:BarChar = "#"
 
+# Ensure log folder exists
 $LogFolder = "$PSScriptRoot\Logs"
-if (!(Test-Path -Path $LogFolder)) { New-Item -ItemType Directory -Path $LogFolder | Out-Null }
+if (!(Test-Path -Path $LogFolder)) {
+    New-Item -ItemType Directory -Path $LogFolder | Out-Null
+}
 $LogFile = "$LogFolder\HealthCheckLog_$(Get-Date -Format 'yyyyMMdd_HHmmss').txt"
 
 # Global counters for summary
@@ -25,7 +28,11 @@ Function Log {
     param ([string]$Message)
     $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $Entry = "$Timestamp : $Message"
-    Add-Content -Path $LogFile -Value $Entry
+    try {
+        Add-Content -Path $LogFile -Value $Entry -ErrorAction Stop
+    } catch {
+        Write-Host "Failed to write to log file: $($_.Exception.Message)" -ForegroundColor Red
+    }
     Write-Host $Entry
 }
 
@@ -44,9 +51,16 @@ Function Invoke-Section {
     } else {
         Log "Running section: $SectionName"
         Write-Host "=== Running $SectionName ===" -ForegroundColor Yellow
-        & $Action
+        try {
+            & $Action
+        } catch {
+            $Global:ErrorCount++
+            Log "Error in section $SectionName: $($_.Exception.Message)"
+            Write-Host "Error in section $SectionName: $($_.Exception.Message)" -ForegroundColor Red
+        }
     }
 }
+
 
 # =========================
 # Final Summary Writer
@@ -65,37 +79,53 @@ Function Write-FinalSummary {
         $summary += "Audit Findings: $Global:AuditCount"
         $summary += "==========================="
 
+        # Write summary to log file
         Add-Content -Path $LogFile -Value "`n$($summary -join "`n")"
-        Write-Host "Final summary written to: $LogFile" -ForegroundColor Cyan
+
+        # Also show summary on console
+        Write-Host "`n=== CKMWinFix Summary ===" -ForegroundColor Cyan
+        foreach ($line in $summary) {
+            Write-Host $line -ForegroundColor Green
+        }
+
+        Write-Host "`nFinal summary written to: $LogFile" -ForegroundColor Cyan
     } catch {
+        $Global:ErrorCount++
+        Log "Error writing final summary: $($_.Exception.Message)"
         Write-Host "Error writing final summary: $($_.Exception.Message)" -ForegroundColor Red
     }
 }
 
 
 
+
 # =========================
 # Feature toggles
 # =========================
-$Global:EnableDebloat       = $true
-$Global:EnableFullScan      = $false
-$Global:EnableChkDsk        = $true
-$Global:ClearEventLogs      = $false
-$Global:DoScheduleTask      = $true
-$Global:EnableDriverUpdate  = $true
-$Global:EnableSoftwareUpdate= $true
-$Global:FixPermissions      = $true
+$Global:EnableDebloat        = $true
+$Global:EnableFullScan       = $false
+$Global:EnableChkDsk         = $true
+$Global:ClearEventLogs       = $false
+$Global:DoScheduleTask       = $true
+$Global:EnableDriverUpdate   = $true
+$Global:EnableSoftwareUpdate = $true
+$Global:FixPermissions       = $true
 
 # =========================
 # Detect OS version
 # =========================
-$ProductReg = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
-$ProductName = $ProductReg.ProductName
-$EditionID   = $ProductReg.EditionID
-$ReleaseId   = $ProductReg.ReleaseId
-$DisplayOS   = "$ProductName ($EditionID, Release $ReleaseId)"
+try {
+    $ProductReg = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+    $ProductName = $ProductReg.ProductName
+    $EditionID   = $ProductReg.EditionID
+    $ReleaseId   = $ProductReg.ReleaseId
+    $DisplayOS   = "$ProductName ($EditionID, Release $ReleaseId)"
+    Log "Detected OS: $DisplayOS"
+} catch {
+    $Global:ErrorCount++
+    Log "OS detection error: $($_.Exception.Message)"
+}
 
-Log "Detected OS: $DisplayOS"
 # =========================
 # Health monitoring
 # =========================
@@ -104,13 +134,13 @@ Function Check-SystemHealth {
     Write-Host "=== System Health Check ===" -ForegroundColor Yellow
 
     try {
-        $CPU = Get-WmiObject Win32_Processor -Verbose
-        $RAM = Get-WmiObject Win32_OperatingSystem -Verbose
-        $Disk = Get-WmiObject Win32_LogicalDisk -Filter "DeviceID='C:'" -Verbose
+        $CPU  = Get-WmiObject Win32_Processor -ErrorAction Stop
+        $RAM  = Get-WmiObject Win32_OperatingSystem -ErrorAction Stop
+        $Disk = Get-WmiObject Win32_LogicalDisk -Filter "DeviceID='C:'" -ErrorAction Stop
 
         $Results = @(
-            [PSCustomObject]@{ Metric="CPU"; Value="$($CPU.LoadPercentage)%"; Status="OK" },
-            [PSCustomObject]@{ Metric="RAM"; Value="$([math]::Round(($RAM.TotalVisibleMemorySize - $RAM.FreePhysicalMemory)/1GB)) GB used"; Status="OK" },
+            [PSCustomObject]@{ Metric="CPU";  Value="$($CPU.LoadPercentage)%"; Status="OK" },
+            [PSCustomObject]@{ Metric="RAM";  Value="$([math]::Round(($RAM.TotalVisibleMemorySize - $RAM.FreePhysicalMemory)/1GB)) GB used"; Status="OK" },
             [PSCustomObject]@{ Metric="Disk"; Value="$([math]::Round($Disk.FreeSpace/1GB)) GB free"; Status="OK" }
         )
 
@@ -119,26 +149,37 @@ Function Check-SystemHealth {
 
         Write-Host "`n=== Health Visual ===" -ForegroundColor Magenta
         Add-Content -Path $LogFile -Value "`n=== Health Visual ==="
+
         foreach ($Result in $Results) {
-            $Bars = if ($Result.Metric -eq "CPU") { [math]::Round($CPU.LoadPercentage/5) }
-                    elseif ($Result.Metric -eq "RAM") { [math]::Round(($RAM.TotalVisibleMemorySize - $RAM.FreePhysicalMemory)/100000) }
-                    else { [math]::Round($Disk.FreeSpace/1GB/10) }
+            $Bars = switch ($Result.Metric) {
+                "CPU"  { [math]::Round($CPU.LoadPercentage / 5) }
+                "RAM"  { [math]::Round(($RAM.TotalVisibleMemorySize - $RAM.FreePhysicalMemory) / 100000) }
+                "Disk" { [math]::Round(($Disk.FreeSpace / 1GB) / 10) }
+            }
+            if ($Bars -lt 1) { $Bars = 1 } # ensure at least one bar
             $BarString = ($Global:BarChar * $Bars)
             $Line = ("{0,-10} {1,-20} | {2}" -f $Result.Metric, $Result.Value, $BarString)
             Write-Host $Line -ForegroundColor Cyan
             Add-Content -Path $LogFile -Value $Line
         }
-    } catch {
-        Log "System Health error: $($_.Exception.Message)"
-    }
 
-    Log "System Health Check Completed."
+        $Global:AuditCount++
+        Log "System Health Check Completed."
+    } catch {
+        $Global:ErrorCount++
+        Log "System Health error: $($_.Exception.Message)"
+        Write-Host "System Health error: $($_.Exception.Message)" -ForegroundColor Red
+    }
 }
+
 # =========================
 # Fix Permissions (Scoped)
 # =========================
 Function Fix-SystemPermissions {
-    if (-not $Global:FixPermissions) { Log "Permission repair disabled."; return }
+    if (-not $Global:FixPermissions) {
+        Log "Permission repair disabled."
+        return
+    }
 
     Log "Resetting user-level permissions and registry defaults..."
     Write-Host "=== Resetting File and Registry Permissions (Scoped) ===" -ForegroundColor Yellow
@@ -148,19 +189,28 @@ Function Fix-SystemPermissions {
         icacls "$env:USERPROFILE" /reset /t /c /q 2>$null
         icacls "C:\ProgramData" /reset /t /c /q 2>$null
         $Global:RepairCount++
+        Log "ACLs reset for user profile and ProgramData."
 
-        # Refresh registry & security policy defaults
-        secedit /configure /cfg %windir%\inf\defltbase.inf /db defltbase.sdb /verbose 2>$null
-        $Global:RepairCount++
-
-        Log "User-level permissions and registry defaults reset."
+        # Refresh registry & security policy defaults (only if file exists)
+        $DefltBase = Join-Path $env:windir "inf\defltbase.inf"
+        if (Test-Path $DefltBase) {
+            secedit /configure /cfg $DefltBase /db defltbase.sdb /verbose 2>$null
+            $Global:RepairCount++
+            Log "Registry and security policy defaults refreshed."
+        } else {
+            $Global:SkippedCount++
+            Log "Skipped registry defaults reset (defltbase.inf not found)."
+        }
     } catch {
         $Global:ErrorCount++
         Log "Permission repair error: $($_.Exception.Message)"
+        Write-Host "Permission repair error: $($_.Exception.Message)" -ForegroundColor Red
     }
 
     Log "Fix-SystemPermissions Completed."
+    Write-Host "=== Fix-SystemPermissions Completed ===" -ForegroundColor Green
 }
+
 
 
 # =========================
@@ -181,6 +231,7 @@ Function Optimize-System {
     } catch {
         $Global:ErrorCount++
         Log "Temp/Prefetch cleanup error: $($_.Exception.Message)"
+        Write-Host "Temp/Prefetch cleanup error: $($_.Exception.Message)" -ForegroundColor Red
     }
 
     # Clean Windows Update cache
@@ -197,6 +248,7 @@ Function Optimize-System {
     } catch {
         $Global:ErrorCount++
         Log "Update cache cleanup error: $($_.Exception.Message)"
+        Write-Host "Update cache cleanup error: $($_.Exception.Message)" -ForegroundColor Red
     } finally {
         Start-Service -Name bits -ErrorAction SilentlyContinue
         Start-Service -Name wuauserv -ErrorAction SilentlyContinue
@@ -211,22 +263,30 @@ Function Optimize-System {
     } catch {
         $Global:ErrorCount++
         Log "Recycle Bin cleanup error: $($_.Exception.Message)"
+        Write-Host "Recycle Bin cleanup error: $($_.Exception.Message)" -ForegroundColor Red
     }
 
-    # Disable non-Microsoft startup items
+    # Disable non-Microsoft startup items (safer approach)
     Write-Host "Disabling non-Microsoft startup items..." -ForegroundColor Yellow
     try {
-        Get-CimInstance -Namespace "root\cimv2" -Class Win32_StartupCommand |
-            Where-Object { $_.Command -notlike "*Windows*" } |
-            ForEach-Object {
-                Remove-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name $_.Name -ErrorAction SilentlyContinue
-                Remove-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name $_.Name -ErrorAction SilentlyContinue
+        $StartupItems = Get-CimInstance -Namespace "root\cimv2" -Class Win32_StartupCommand |
+            Where-Object { $_.Command -and $_.Command -notlike "*Windows*" }
+
+        foreach ($Item in $StartupItems) {
+            try {
+                Remove-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name $Item.Name -ErrorAction SilentlyContinue
+                Remove-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name $Item.Name -ErrorAction SilentlyContinue
                 $Global:RepairCount++
-                Log "Disabled startup item: $($_.Name)"
+                Log "Disabled startup item: $($Item.Name)"
+            } catch {
+                $Global:SkippedCount++
+                Log "Skipped startup item (error): $($Item.Name)"
             }
+        }
     } catch {
         $Global:ErrorCount++
         Log "Startup cleanup error: $($_.Exception.Message)"
+        Write-Host "Startup cleanup error: $($_.Exception.Message)" -ForegroundColor Red
     }
 
     # Optimize visual effects
@@ -239,6 +299,7 @@ Function Optimize-System {
     } catch {
         $Global:ErrorCount++
         Log "Visual effects tweak error: $($_.Exception.Message)"
+        Write-Host "Visual effects tweak error: $($_.Exception.Message)" -ForegroundColor Red
     }
 
     # Set power plan
@@ -250,9 +311,11 @@ Function Optimize-System {
     } catch {
         $Global:ErrorCount++
         Log "Power plan error: $($_.Exception.Message)"
+        Write-Host "Power plan error: $($_.Exception.Message)" -ForegroundColor Red
     }
 
     Log "Optimization Completed."
+    Write-Host "=== Optimization Completed ===" -ForegroundColor Green
 }
 
 # =========================
@@ -260,7 +323,9 @@ Function Optimize-System {
 # =========================
 Function Troubleshoot-Issues {
     Log "Starting Troubleshooting..."
+    Write-Host "=== Automated Troubleshooting ===" -ForegroundColor Yellow
 
+    # Run System File Checker
     Write-Host "=== Running System File Checker (SFC /scannow) ===" -ForegroundColor Yellow
     $StartTime = Get-Date
     try {
@@ -269,8 +334,14 @@ Function Troubleshoot-Issues {
         $Duration = $EndTime - $StartTime
         Write-Host "SFC completed in $($Duration.Minutes)m $($Duration.Seconds)s" -ForegroundColor Green
         Log "SFC completed in $($Duration.Minutes)m $($Duration.Seconds)s."
-    } catch { Log "SFC error: $_" }
+        $Global:RepairCount++
+    } catch {
+        $Global:ErrorCount++
+        Log "SFC error: $($_.Exception.Message)"
+        Write-Host "SFC error: $($_.Exception.Message)" -ForegroundColor Red
+    }
 
+    # Run DISM RestoreHealth
     Write-Host "=== Running DISM /RestoreHealth ===" -ForegroundColor Yellow
     $StartTime = Get-Date
     try {
@@ -279,13 +350,29 @@ Function Troubleshoot-Issues {
         $Duration = $EndTime - $StartTime
         Write-Host "DISM completed in $($Duration.Minutes)m $($Duration.Seconds)s" -ForegroundColor Green
         Log "DISM completed in $($Duration.Minutes)m $($Duration.Seconds)s."
-    } catch { Log "DISM error: $_" }
+        $Global:RepairCount++
+    } catch {
+        $Global:ErrorCount++
+        Log "DISM error: $($_.Exception.Message)"
+        Write-Host "DISM error: $($_.Exception.Message)" -ForegroundColor Red
+    }
 
+    # Flush DNS cache
     Write-Host "=== Flushing DNS Cache ===" -ForegroundColor Yellow
-    try { ipconfig /flushdns | Out-Host; Log "DNS cache flushed." } catch { Log "DNS flush error: $_" }
+    try {
+        ipconfig /flushdns | Out-Host
+        Log "DNS cache flushed."
+        $Global:RepairCount++
+    } catch {
+        $Global:ErrorCount++
+        Log "DNS flush error: $($_.Exception.Message)"
+        Write-Host "DNS flush error: $($_.Exception.Message)" -ForegroundColor Red
+    }
 
     Log "Troubleshooting Completed."
+    Write-Host "=== Troubleshooting Completed ===" -ForegroundColor Green
 }
+
 # =========================
 # Storage Optimization
 # =========================
@@ -293,44 +380,52 @@ Function Optimize-Storage {
     Log "Starting Storage Optimization..."
     Write-Host "=== Detecting Storage Devices ===" -ForegroundColor Yellow
     try {
-        $Disks = Get-PhysicalDisk -Verbose
+        $Disks = Get-PhysicalDisk -ErrorAction Stop
         foreach ($Disk in $Disks) {
             Write-Host "Disk: $($Disk.FriendlyName)" -ForegroundColor Cyan
             Write-Host "Media Type: $($Disk.MediaType)" -ForegroundColor Green
             Log "Detected disk: $($Disk.FriendlyName) [$($Disk.MediaType)]"
 
             # Map disk → partitions → volumes
-            $Partitions = Get-Partition -DiskNumber $Disk.DeviceID -ErrorAction SilentlyContinue
-            foreach ($Partition in $Partitions) {
-                $Volume = Get-Volume -Partition $Partition -ErrorAction SilentlyContinue
-                if ($Volume -and $Volume.DriveLetter) {
-                    if ($Disk.MediaType -eq "HDD") {
-                        Write-Host "Running defrag on HDD volume $($Volume.DriveLetter)..." -ForegroundColor Yellow
-                        Optimize-Volume -DriveLetter $Volume.DriveLetter -Defrag -Verbose
-                        $Global:RepairCount++
-                        Log "Defrag completed on $($Disk.FriendlyName) volume $($Volume.DriveLetter)"
-                    }
-                    elseif ($Disk.MediaType -eq "SSD") {
-                        Write-Host "Running TRIM optimization on SSD volume $($Volume.DriveLetter)..." -ForegroundColor Yellow
-                        Optimize-Volume -DriveLetter $Volume.DriveLetter -ReTrim -Verbose
-                        $Global:RepairCount++
-                        Log "TRIM optimization completed on $($Disk.FriendlyName) volume $($Volume.DriveLetter)"
-                    }
-                    else {
-                        $Global:SkippedCount++
-                        Write-Host "Skipping unknown media type: $($Disk.MediaType)" -ForegroundColor Yellow
-                        Log "Skipped disk $($Disk.FriendlyName) (unknown type)"
+            try {
+                $Partitions = Get-Partition -DiskNumber $Disk.DeviceID -ErrorAction SilentlyContinue
+                foreach ($Partition in $Partitions) {
+                    $Volume = Get-Volume -Partition $Partition -ErrorAction SilentlyContinue
+                    if ($Volume -and $Volume.DriveLetter) {
+                        if ($Disk.MediaType -eq "HDD") {
+                            Write-Host "Running defrag on HDD volume $($Volume.DriveLetter)..." -ForegroundColor Yellow
+                            Optimize-Volume -DriveLetter $Volume.DriveLetter -Defrag -Verbose
+                            $Global:RepairCount++
+                            Log "Defrag completed on $($Disk.FriendlyName) volume $($Volume.DriveLetter)"
+                        }
+                        elseif ($Disk.MediaType -eq "SSD") {
+                            Write-Host "Running TRIM optimization on SSD volume $($Volume.DriveLetter)..." -ForegroundColor Yellow
+                            Optimize-Volume -DriveLetter $Volume.DriveLetter -ReTrim -Verbose
+                            $Global:RepairCount++
+                            Log "TRIM optimization completed on $($Disk.FriendlyName) volume $($Volume.DriveLetter)"
+                        }
+                        else {
+                            $Global:SkippedCount++
+                            Write-Host "Skipping unknown media type: $($Disk.MediaType)" -ForegroundColor Yellow
+                            Log "Skipped disk $($Disk.FriendlyName) (unknown type)"
+                        }
                     }
                 }
+            } catch {
+                $Global:ErrorCount++
+                Log "Partition/volume mapping error on $($Disk.FriendlyName): $($_.Exception.Message)"
+                Write-Host "Partition/volume mapping error on $($Disk.FriendlyName): $($_.Exception.Message)" -ForegroundColor Red
             }
         }
 
         Write-Host "`n=== Storage Visual ===" -ForegroundColor Magenta
         Add-Content -Path $LogFile -Value "`n=== Storage Visual ==="
         foreach ($Disk in $Disks) {
-            $Bars = if ($Disk.MediaType -eq "HDD") { 20 }
-                    elseif ($Disk.MediaType -eq "SSD") { 30 }
-                    else { 10 }
+            $Bars = switch ($Disk.MediaType) {
+                "HDD" { 20 }
+                "SSD" { 30 }
+                default { 10 }
+            }
             $BarString = ($Global:BarChar * $Bars)
             $Line = ("{0,-20} {1,-10} | {2}" -f $Disk.FriendlyName, $Disk.MediaType, $BarString)
             Write-Host $Line -ForegroundColor Cyan
@@ -346,6 +441,7 @@ Function Optimize-Storage {
     Write-Host "=== Storage Optimization Completed ===" -ForegroundColor Green
 }
 
+
 # =========================
 # Disk Integrity
 # =========================
@@ -354,26 +450,39 @@ Function Check-DiskIntegrity {
     Write-Host "=== Disk Integrity ===" -ForegroundColor Yellow
 
     try {
-        $Disks = Get-PhysicalDisk -Verbose
+        $Disks = Get-PhysicalDisk -ErrorAction Stop
         $Results = $Disks | Select FriendlyName, OperationalStatus, HealthStatus
 
+        # Output results to console and log
         $Results | Format-Table -AutoSize
         $Results | Out-String | Add-Content -Path $LogFile
 
         Write-Host "`n=== Disk Visual ===" -ForegroundColor Magenta
         Add-Content -Path $LogFile -Value "`n=== Disk Visual ==="
+
         foreach ($Disk in $Results) {
             $BarString = if ($Disk.HealthStatus -eq "Healthy") { ($Global:BarChar * 10) } else { "## ERROR ##" }
             $Line = ("{0,-20} {1,-15} {2,-10} | {3}" -f $Disk.FriendlyName, $Disk.OperationalStatus, $Disk.HealthStatus, $BarString)
             Write-Host $Line -ForegroundColor Cyan
             Add-Content -Path $LogFile -Value $Line
-        }
-    } catch {
-        Log "Disk Integrity error: $($_.Exception.Message)"
-    }
 
-    Log "Disk Integrity Check Completed."
+            # Update counters
+            if ($Disk.HealthStatus -eq "Healthy") {
+                $Global:AuditCount++
+            } else {
+                $Global:ErrorCount++
+            }
+        }
+
+        Log "Disk Integrity Check Completed."
+        Write-Host "=== Disk Integrity Check Completed ===" -ForegroundColor Green
+    } catch {
+        $Global:ErrorCount++
+        Log "Disk Integrity error: $($_.Exception.Message)"
+        Write-Host "Disk Integrity error: $($_.Exception.Message)" -ForegroundColor Red
+    }
 }
+
 # =========================
 # Security scans (Windows Defender)
 # =========================
@@ -392,6 +501,7 @@ Function Ensure-Defender {
     } catch {
         $Global:ErrorCount++
         Log "Failed to check/enable Windows Defender: $($_.Exception.Message)"
+        Write-Host "Failed to check/enable Windows Defender: $($_.Exception.Message)" -ForegroundColor Red
     }
 }
 
@@ -412,6 +522,7 @@ Function Run-SecurityScans {
         } catch {
             $Global:ErrorCount++
             Log "Defender signature update error: $($_.Exception.Message)"
+            Write-Host "Defender signature update error: $($_.Exception.Message)" -ForegroundColor Red
         }
 
         # Run scan
@@ -429,32 +540,47 @@ Function Run-SecurityScans {
         } catch {
             $Global:ErrorCount++
             Log "Defender CLI scan error: $($_.Exception.Message)"
+            Write-Host "Defender CLI scan error: $($_.Exception.Message)" -ForegroundColor Red
         }
     } else {
         $Global:SkippedCount++
         Log "Windows Defender CLI not found. Skipping Defender scan."
+        Write-Host "Windows Defender CLI not found. Skipping Defender scan." -ForegroundColor Yellow
     }
 
     # Audit manual-start services
     Write-Host "Checking manual-start services currently running..." -ForegroundColor Yellow
     try {
-        Get-Service | Where-Object { $_.StartType -eq "Manual" -and $_.Status -eq "Running" } | Format-Table -AutoSize
-        Log "Manual-start services audit completed."
+        $ManualServices = Get-Service | Where-Object { $_.StartType -eq "Manual" -and $_.Status -eq "Running" }
+        if ($ManualServices) {
+            $ManualServices | Format-Table -AutoSize
+            $Global:AuditCount++
+            Log "Manual-start services audit completed."
+        } else {
+            $Global:SkippedCount++
+            Log "No manual-start services currently running."
+        }
     } catch {
         $Global:ErrorCount++
         Log "Service audit error: $($_.Exception.Message)"
+        Write-Host "Service audit error: $($_.Exception.Message)" -ForegroundColor Red
     }
 
     Log "Security Scans Completed."
+    Write-Host "=== Security Scans Completed ===" -ForegroundColor Green
 }
 
 # =========================
 # Debloat Windows Apps + Telemetry Removal
 # =========================
 Function Debloat-Windows {
-    if (-not $Global:EnableDebloat) { Log "Debloat disabled."; return }
+    if (-not $Global:EnableDebloat) {
+        Log "Debloat disabled."
+        return
+    }
 
     Log "Debloating Windows apps and features..."
+    Write-Host "=== Debloat Windows Apps + Telemetry Removal ===" -ForegroundColor Yellow
 
     try {
         # Protected apps that should never be removed
@@ -513,6 +639,7 @@ Function Debloat-Windows {
                     } catch {
                         $Global:ErrorCount++
                         Log "Error removing: $friendlyName"
+                        Write-Host "Error removing: $friendlyName" -ForegroundColor Red
                     }
                 } else {
                     $Global:SkippedCount++
@@ -529,14 +656,23 @@ Function Debloat-Windows {
 
         # Telemetry disable remains automatic
         Log "Disabling telemetry via registry..."
-        New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Force | Out-Null
-        Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "AllowTelemetry" -Value 0 -Type DWord -ErrorAction SilentlyContinue
+        try {
+            New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Force | Out-Null
+            Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "AllowTelemetry" -Value 0 -Type DWord -ErrorAction SilentlyContinue
+            $Global:RepairCount++
+            Log "Telemetry registry setting applied."
+        } catch {
+            $Global:ErrorCount++
+            Log "Telemetry registry tweak error: $($_.Exception.Message)"
+            Write-Host "Telemetry registry tweak error: $($_.Exception.Message)" -ForegroundColor Red
+        }
 
         $TelemetryServices = @("DiagTrack","dmwappushservice","WerSvc","PcaSvc")
         foreach ($svc in $TelemetryServices) {
             try {
                 Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue
                 Set-Service -Name $svc -StartupType Disabled -ErrorAction SilentlyContinue
+                $Global:RepairCount++
                 Log "Disabled telemetry service: $svc"
             } catch {
                 $Global:SkippedCount++
@@ -546,11 +682,14 @@ Function Debloat-Windows {
     } catch {
         $Global:ErrorCount++
         Log "Debloat error: $($_.Exception.Message)"
+        Write-Host "Debloat error: $($_.Exception.Message)" -ForegroundColor Red
     }
 
     Write-Progress -Activity "Debloating Windows" -Completed
     Log "Debloat Completed."
+    Write-Host "=== Debloat Completed ===" -ForegroundColor Green
 }
+
 
 # =========================
 # Check Windows Updates
@@ -564,27 +703,46 @@ Function Check-WindowsUpdates {
 
         if (Get-Command Get-WindowsUpdate -ErrorAction SilentlyContinue) {
             $updates = Get-WindowsUpdate -AcceptAll -IgnoreReboot
-            if ($updates) {
-                Install-WindowsUpdate -AcceptAll -IgnoreReboot -AutoReboot:$false
-                $Global:UpdateCount += $updates.Count
-                Log "Installed $($updates.Count) Windows updates."
+            if ($updates -and $updates.Count -gt 0) {
+                try {
+                    Install-WindowsUpdate -AcceptAll -IgnoreReboot -AutoReboot:$false
+                    $Global:UpdateCount += $updates.Count
+                    Log "Installed $($updates.Count) Windows updates."
+                    Write-Host "Installed $($updates.Count) Windows updates." -ForegroundColor Green
+                } catch {
+                    $Global:ErrorCount++
+                    Log "Windows Update install error: $($_.Exception.Message)"
+                    Write-Host "Windows Update install error: $($_.Exception.Message)" -ForegroundColor Red
+                }
             } else {
                 $Global:SkippedCount++
                 Log "No Windows updates available."
+                Write-Host "No Windows updates available." -ForegroundColor Cyan
             }
         } else {
             # Fallback to USOClient
             Log "PSWindowsUpdate not available, using USOClient..."
-            Start-Process -FilePath "usoclient.exe" -ArgumentList "StartScan" -Wait
-            $Global:RepairCount++
+            try {
+                Start-Process -FilePath "usoclient.exe" -ArgumentList "StartScan" -Wait
+                $Global:RepairCount++
+                Log "USOClient scan triggered."
+                Write-Host "USOClient scan triggered." -ForegroundColor Green
+            } catch {
+                $Global:ErrorCount++
+                Log "USOClient scan error: $($_.Exception.Message)"
+                Write-Host "USOClient scan error: $($_.Exception.Message)" -ForegroundColor Red
+            }
         }
     } catch {
         $Global:ErrorCount++
         Log "Windows Update error: $($_.Exception.Message)"
+        Write-Host "Windows Update error: $($_.Exception.Message)" -ForegroundColor Red
     }
 
     Log "Windows Update check completed."
+    Write-Host "=== Windows Update Check Completed ===" -ForegroundColor Green
 }
+
 
 # =========================
 # Update System (Drivers + Winget Apps)
@@ -595,36 +753,46 @@ Function Update-System {
 
     try {
         # Update drivers via pnputil
+        Write-Host "Scanning for driver updates..." -ForegroundColor Yellow
         try {
             pnputil /scan-devices | Out-Null
             $Global:UpdateCount++
             Log "Driver scan completed."
+            Write-Host "Driver scan completed." -ForegroundColor Green
         } catch {
             $Global:ErrorCount++
             Log "Driver update error: $($_.Exception.Message)"
+            Write-Host "Driver update error: $($_.Exception.Message)" -ForegroundColor Red
         }
 
         # Update apps via Winget
+        Write-Host "Checking for Winget application updates..." -ForegroundColor Yellow
         try {
             $proc = Start-Process winget -ArgumentList 'upgrade --accept-source-agreements --accept-package-agreements --silent' -NoNewWindow -PassThru -Wait
             if ($proc.ExitCode -eq 0) {
                 $Global:UpdateCount++
                 Log "Winget upgrade executed successfully."
+                Write-Host "Winget upgrade executed successfully." -ForegroundColor Green
             } else {
                 $Global:ErrorCount++
                 Log "Winget upgrade failed with exit code $($proc.ExitCode)."
+                Write-Host "Winget upgrade failed with exit code $($proc.ExitCode)." -ForegroundColor Red
             }
         } catch {
             $Global:ErrorCount++
             Log "Winget update error: $($_.Exception.Message)"
+            Write-Host "Winget update error: $($_.Exception.Message)" -ForegroundColor Red
         }
     } catch {
         $Global:ErrorCount++
         Log "System update error: $($_.Exception.Message)"
+        Write-Host "System update error: $($_.Exception.Message)" -ForegroundColor Red
     }
 
     Log "System update completed."
+    Write-Host "=== System Update Completed ===" -ForegroundColor Green
 }
+
 
 
 # =========================
@@ -637,42 +805,50 @@ Function Optimize-NetworkAuto {
     $Results = @()
 
     try {
-        $Adapters = Get-CimInstance Win32_NetworkAdapter -Verbose | Where-Object { $_.NetEnabled -eq $true }
+        $Adapters = Get-CimInstance Win32_NetworkAdapter -ErrorAction Stop | Where-Object { $_.NetEnabled -eq $true }
 
-        foreach ($Adapter in $Adapters) {
-            $NegotiatedMbps = [math]::Round($Adapter.Speed / 1e6)
-            $Desc = $Adapter.Description
+        if (-not $Adapters) {
+            $Global:SkippedCount++
+            Log "No active network adapters detected."
+            Write-Host "No active network adapters detected." -ForegroundColor Cyan
+        } else {
+            foreach ($Adapter in $Adapters) {
+                $NegotiatedMbps = if ($Adapter.Speed) { [math]::Round($Adapter.Speed / 1e6) } else { 0 }
+                $Desc = $Adapter.Description
 
-            $Result = [PSCustomObject]@{
-                Adapter     = $Adapter.Name
-                Description = $Desc
-                SpeedMbps   = $NegotiatedMbps
+                $Result = [PSCustomObject]@{
+                    Adapter     = $Adapter.Name
+                    Description = $Desc
+                    SpeedMbps   = $NegotiatedMbps
+                }
+                $Results += $Result
+
+                $Global:AuditCount++
+                Log "Adapter: $($Adapter.Name) [$Desc] Speed: $NegotiatedMbps Mbps"
             }
-            $Results += $Result
 
-            $Global:AuditCount++
-            Log "Adapter: $($Adapter.Name) [$Desc] Speed: $NegotiatedMbps Mbps"
+            Write-Host "`n=== Speedtest Visual ===" -ForegroundColor Magenta
+            Add-Content -Path $LogFile -Value "`n=== Speedtest Visual ==="
+
+            foreach ($Result in $Results) {
+                $Bars = [math]::Round($Result.SpeedMbps / 100)
+                if ($Bars -lt 1) { $Bars = 1 } # ensure at least one bar
+                $BarString = ($Global:BarChar * $Bars)
+                $Line = ("{0,-20} {1,6} Mbps | {2}" -f $Result.Adapter, $Result.SpeedMbps, $BarString)
+                Write-Host $Line -ForegroundColor Cyan
+                Add-Content -Path $LogFile -Value $Line
+            }
         }
 
-        Write-Host "`n=== Speedtest Visual ===" -ForegroundColor Magenta
-        Add-Content -Path $LogFile -Value "`n=== Speedtest Visual ==="
-        foreach ($Result in $Results) {
-            $Bars = [math]::Round($Result.SpeedMbps / 100)
-            if ($Bars -lt 1) { $Bars = 1 } # ensure at least one bar
-            $BarString = ($Global:BarChar * $Bars)
-            $Line = ("{0,-20} {1,6} Mbps | {2}" -f $Result.Adapter, $Result.SpeedMbps, $BarString)
-            Write-Host $Line -ForegroundColor Cyan
-            Add-Content -Path $LogFile -Value $Line
-        }
+        Log "Network Optimization Completed."
+        Write-Host "=== Network Optimization Completed ===" -ForegroundColor Green
     } catch {
         $Global:ErrorCount++
         Log "Network optimization error: $($_.Exception.Message)"
-        Write-Host "Error during network optimization: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "Network optimization error: $($_.Exception.Message)" -ForegroundColor Red
     }
-
-    Log "Network Optimization Completed."
-    Write-Host "=== Network Optimization Completed ===" -ForegroundColor Green
 }
+
 
 
 # =========================
@@ -683,33 +859,44 @@ Function Compare-PerformanceBaseline {
     Write-Host "=== Performance Baseline ===" -ForegroundColor Yellow
 
     try {
-        $Perf = Get-Counter '\Processor(_Total)\% Processor Time','\Memory\Available MBytes','\PhysicalDisk(_Total)\Avg. Disk Queue Length' -Verbose
+        $Perf = Get-Counter '\Processor(_Total)\% Processor Time','\Memory\Available MBytes','\PhysicalDisk(_Total)\Avg. Disk Queue Length' -ErrorAction Stop
+
         $Results = @(
-            [PSCustomObject]@{ Metric="CPU Usage"; Value="$([math]::Round($Perf.CounterSamples[0].CookedValue))%" },
+            [PSCustomObject]@{ Metric="CPU Usage";     Value="$([math]::Round($Perf.CounterSamples[0].CookedValue))%" },
             [PSCustomObject]@{ Metric="Available RAM"; Value="$([math]::Round($Perf.CounterSamples[1].CookedValue)) MB" },
-            [PSCustomObject]@{ Metric="Disk Queue"; Value="$([math]::Round($Perf.CounterSamples[2].CookedValue,2))" }
+            [PSCustomObject]@{ Metric="Disk Queue";    Value="$([math]::Round($Perf.CounterSamples[2].CookedValue,2))" }
         )
 
+        # Output results to console and log
         $Results | Format-Table -AutoSize
         $Results | Out-String | Add-Content -Path $LogFile
 
         Write-Host "`n=== Performance Visual ===" -ForegroundColor Magenta
         Add-Content -Path $LogFile -Value "`n=== Performance Visual ==="
+
         foreach ($Result in $Results) {
-            $Bars = if ($Result.Metric -eq "CPU Usage") { [math]::Round(($Perf.CounterSamples[0].CookedValue)/5) }
-                    elseif ($Result.Metric -eq "Available RAM") { [math]::Round(($Perf.CounterSamples[1].CookedValue)/100) }
-                    else { [math]::Round(($Perf.CounterSamples[2].CookedValue)*10) }
+            $Bars = switch ($Result.Metric) {
+                "CPU Usage"     { [math]::Round(($Perf.CounterSamples[0].CookedValue) / 5) }
+                "Available RAM" { [math]::Round(($Perf.CounterSamples[1].CookedValue) / 100) }
+                "Disk Queue"    { [math]::Round(($Perf.CounterSamples[2].CookedValue) * 10) }
+            }
+            if ($Bars -lt 1) { $Bars = 1 } # ensure at least one bar
             $BarString = ($Global:BarChar * $Bars)
             $Line = ("{0,-15} {1,-15} | {2}" -f $Result.Metric, $Result.Value, $BarString)
             Write-Host $Line -ForegroundColor Cyan
             Add-Content -Path $LogFile -Value $Line
         }
-    } catch {
-        Log "Performance Baseline error: $($_.Exception.Message)"
-    }
 
-    Log "Performance Baseline Completed."
+        $Global:AuditCount++
+        Log "Performance Baseline Completed."
+        Write-Host "=== Performance Baseline Completed ===" -ForegroundColor Green
+    } catch {
+        $Global:ErrorCount++
+        Log "Performance Baseline error: $($_.Exception.Message)"
+        Write-Host "Performance Baseline error: $($_.Exception.Message)" -ForegroundColor Red
+    }
 }
+
 # =========================
 # Backup (robocopy, skips junctions, logs to file)
 # =========================
@@ -717,20 +904,38 @@ Function Backup-UserData {
     Log "Starting Backup of User Data..."
     Write-Host "=== Backup User Data ===" -ForegroundColor Yellow
 
-    $BackupSource = "$env:USERPROFILE\Documents"
+    $BackupSource      = "$env:USERPROFILE\Documents"
     $BackupDestination = "$PSScriptRoot\Backups"
 
     if (!(Test-Path -Path $BackupDestination)) {
-        New-Item -ItemType Directory -Path $BackupDestination | Out-Null
+        try {
+            New-Item -ItemType Directory -Path $BackupDestination -Force | Out-Null
+            Log "Created backup destination folder: $BackupDestination"
+        } catch {
+            $Global:ErrorCount++
+            $Global:BackupStatus = "Failed"
+            Log "Failed to create backup destination: $($_.Exception.Message)"
+            Write-Host "Failed to create backup destination: $($_.Exception.Message)" -ForegroundColor Red
+            return
+        }
     }
 
     $RoboArgs = "`"$BackupSource`" `"$BackupDestination`" /E /COPY:DAT /R:1 /W:1 /NFL /NDL /NP /XA:SH /XJ /LOG:$LogFile"
 
     try {
-        Start-Process -FilePath "robocopy.exe" -ArgumentList $RoboArgs -Wait
-        Write-Host "Backup Completed: $BackupSource to $BackupDestination" -ForegroundColor Green
-        $Global:BackupStatus = "Success"
-        Log "Backup Completed successfully."
+        $proc = Start-Process -FilePath "robocopy.exe" -ArgumentList $RoboArgs -NoNewWindow -PassThru -Wait
+        if ($proc.ExitCode -le 3) {
+            # Robocopy exit codes 0–3 are considered success/minor issues
+            Write-Host "Backup Completed: $BackupSource to $BackupDestination" -ForegroundColor Green
+            $Global:BackupStatus = "Success"
+            $Global:RepairCount++
+            Log "Backup completed successfully with exit code $($proc.ExitCode)."
+        } else {
+            $Global:BackupStatus = "Failed"
+            $Global:ErrorCount++
+            Log "Backup failed with exit code $($proc.ExitCode)."
+            Write-Host "Backup failed with exit code $($proc.ExitCode)." -ForegroundColor Red
+        }
     } catch {
         $Global:BackupStatus = "Failed"
         $Global:ErrorCount++
@@ -739,6 +944,7 @@ Function Backup-UserData {
     }
 
     Log "Backup process finished."
+    Write-Host "=== Backup Process Finished ===" -ForegroundColor Cyan
 }
 
 # =========================
@@ -765,23 +971,32 @@ Function Analyze-EventLogs {
     } catch {
         $Global:ErrorCount++
         Log "Event log analysis error: $($_.Exception.Message)"
+        Write-Host "Event log analysis error: $($_.Exception.Message)" -ForegroundColor Red
     }
 
     if ($Global:ClearEventLogs) {
         Write-Host "Clearing Event Logs..." -ForegroundColor Yellow
         try {
             Get-EventLog -List | ForEach-Object {
-                Clear-EventLog -LogName $_.Log -ErrorAction SilentlyContinue
+                try {
+                    Clear-EventLog -LogName $_.Log -ErrorAction SilentlyContinue
+                    $Global:RepairCount++
+                    Log "Cleared event log: $($_.Log)"
+                } catch {
+                    $Global:SkippedCount++
+                    Log "Skipped clearing log $($_.Log): $($_.Exception.Message)"
+                }
             }
-            $Global:RepairCount++
             Log "Event Logs Cleared."
         } catch {
             $Global:ErrorCount++
             Log "Event log clear error: $($_.Exception.Message)"
+            Write-Host "Event log clear error: $($_.Exception.Message)" -ForegroundColor Red
         }
     }
 
     Log "Event Log Analysis Completed."
+    Write-Host "=== Event Log Analysis Completed ===" -ForegroundColor Green
 }
 
 # =========================
@@ -794,6 +1009,7 @@ Function Audit-InstalledSoftware {
     )
 
     Log "Auditing installed software for unused programs (>$Months months)..."
+    Write-Host "=== Audit Installed Software ===" -ForegroundColor Yellow
 
     $Cutoff = (Get-Date).AddMonths(-$Months)
 
@@ -804,7 +1020,7 @@ Function Audit-InstalledSoftware {
 
         foreach ($App in $Software) {
             $friendlyName = $App.DisplayName
-            $lastUsed = $App.InstallDate
+            $lastUsed     = $App.InstallDate
 
             # Convert InstallDate if present (format: YYYYMMDD)
             if ($lastUsed -and $lastUsed -match '^\d{8}$') {
@@ -822,13 +1038,16 @@ Function Audit-InstalledSoftware {
                             Start-Process -FilePath "cmd.exe" -ArgumentList "/c $UninstallString" -Wait
                             $Global:RemovedCount++
                             Log "Auto-removed unused software: $friendlyName"
+                            Write-Host "Auto-removed unused software: $friendlyName" -ForegroundColor Green
                         } else {
                             $Global:SkippedCount++
                             Log "No uninstall string for: $friendlyName"
+                            Write-Host "No uninstall string for: $friendlyName" -ForegroundColor Cyan
                         }
                     } catch {
                         $Global:ErrorCount++
-                        Log "Error uninstalling $friendlyName: $_"
+                        Log "Error uninstalling $friendlyName: $($_.Exception.Message)"
+                        Write-Host "Error uninstalling $friendlyName: $($_.Exception.Message)" -ForegroundColor Red
                     }
                 } else {
                     $response = Read-Host "Remove $friendlyName (installed $parsedDate)? (Y/N)"
@@ -839,55 +1058,71 @@ Function Audit-InstalledSoftware {
                                 Start-Process -FilePath "cmd.exe" -ArgumentList "/c $UninstallString" -Wait
                                 $Global:RemovedCount++
                                 Log "Removed unused software: $friendlyName"
+                                Write-Host "Removed unused software: $friendlyName" -ForegroundColor Green
                             } else {
                                 $Global:SkippedCount++
                                 Log "No uninstall string for: $friendlyName"
+                                Write-Host "No uninstall string for: $friendlyName" -ForegroundColor Cyan
                             }
                         } catch {
                             $Global:ErrorCount++
-                            Log "Error uninstalling $friendlyName: $_"
+                            Log "Error uninstalling $friendlyName: $($_.Exception.Message)"
+                            Write-Host "Error uninstalling $friendlyName: $($_.Exception.Message)" -ForegroundColor Red
                         }
                     } else {
                         $Global:SkippedCount++
                         Log "User chose to keep: $friendlyName"
+                        Write-Host "User chose to keep: $friendlyName" -ForegroundColor Yellow
                     }
                 }
             } else {
                 Log "Kept: $friendlyName (recently used or no usage data)"
+                Write-Host "Kept: $friendlyName (recently used or no usage data)" -ForegroundColor Cyan
             }
         }
     } catch {
         $Global:ErrorCount++
         Log "Software audit error: $($_.Exception.Message)"
+        Write-Host "Software audit error: $($_.Exception.Message)" -ForegroundColor Red
     }
 
     Log "Interactive software audit completed."
+    Write-Host "=== Software Audit Completed ===" -ForegroundColor Green
 }
+
 
 # =========================
 # Task Scheduling
 # =========================
 Function Schedule-Task {
-    if (-not $Global:DoScheduleTask) { Log "Task scheduling disabled."; return }
+    if (-not $Global:DoScheduleTask) {
+        Log "Task scheduling disabled."
+        return
+    }
 
     Log "Configuring scheduled task for weekly optimization..."
     Write-Host "=== Scheduling Weekly Optimization Task ===" -ForegroundColor Yellow
 
     try {
-        $Action = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument "-File `"$PSScriptRoot\CKMWinFix.ps1`""
-        $Trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At 3am
+        $Action    = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument "-File `"$PSScriptRoot\CKMWinFix.ps1`""
+        $Trigger   = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At 3am
         $Principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-        $Task = New-ScheduledTask -Action $Action -Trigger $Trigger -Principal $Principal
+        $Task      = New-ScheduledTask -Action $Action -Trigger $Trigger -Principal $Principal
 
         Register-ScheduledTask -TaskName "CKMWinFix" -InputObject $Task -Force
+        $Global:RepairCount++
         Log "Scheduled task 'CKMWinFix' created to run weekly."
+        Write-Host "Scheduled task 'CKMWinFix' created to run weekly." -ForegroundColor Green
     } catch {
+        $Global:ErrorCount++
         Log "Task scheduling error: $($_.Exception.Message)"
         Write-Host "Error creating scheduled task: $($_.Exception.Message)" -ForegroundColor Red
     }
 
     Log "Task Scheduling Completed."
+    Write-Host "=== Task Scheduling Completed ===" -ForegroundColor Cyan
 }
+
 
 # =========================
 # Main Execution
