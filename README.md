@@ -15,44 +15,44 @@ The script is designed to be interactive, verbose, and user‑empowering: you se
 - Optimizes visual effects for performance.
 - Sets power plan to High Performance.
 - All successful actions increment the RepairCount in the summary.
-- 
+
 🧹 **Debloat Windows Apps + Telemetry Removal**
 - Curated removal list of unnecessary apps (Skype, 3D Viewer, OfficeHub, etc.).
 - Interactive prompts let you choose whether to remove or keep each app.
 - Protected apps (Store, Edge, Calculator, Teams, etc.) are skipped automatically.
 - Disables telemetry via registry and services (DiagTrack, dmwappushservice, WerSvc, PcaSvc).
 - Counters: RemovedCount, SkippedCount, ErrorCount updated automatically.
-- 
+
 🔄 **Windows Updates**
 - Uses PSWindowsUpdate if available.
 - Falls back to USOClient if the module isn’t present.
 - Applies all available OS updates.
 - Counters: UpdateCount increments for each update applied.
-- 
+
 📦 **Driver & Software Auto Update**
 - Scans and refreshes drivers using pnputil.
 - Updates installed apps via Winget.
 - Logs whether updates were applied or skipped.
 - Counters: UpdateCount, SkippedCount, ErrorCount updated accordingly.
-- 
+
 📋 **Software Audit (x64 + x86)**
 - Enumerates installed programs from both 64‑bit and 32‑bit registry hives.
 - Flags apps unused for more than 6 months.
 - Interactive prompts let you remove or keep flagged software.
 - Optional AutoRemoveUnused switch removes old apps without prompting.
 - Counters: AuditCount, RemovedCount, SkippedCount, ErrorCount updated automatically.
-- 
+
 🔐 **Security Scans**
 - Updates Windows Defender signatures.
 - Runs a quick scan for malware.
 - Logs results and increments counters.
-- 
+
 💾 **Backup & Audit**
 - Backs up user data to a safe location.
 - Analyzes event logs for warnings/errors.
 - Audits installed software for compliance.
 - Counters: BackupStatus, AuditCount updated.
-- 
+
 📊 **Logging & Summary**
 - All actions logged to a buffer file during runtime.
 - At completion, the script writes a summary first (Repairs, Removals, Skips, Errors, Updates, Backup, Audit).
