@@ -6,12 +6,12 @@
 net session >nul 2>&1
 if %errorLevel% == 0 (
     :: Already admin
-    powershell.exe -ExecutionPolicy Bypass -File "%~dp0CKMWinFix.ps1"
+    powershell.exe -ExecutionPolicy Bypass -NoProfile -File "%~dp0CKMWinFix.ps1"
 ) else (
     :: Relaunch as admin
     echo Requesting administrator privileges...
-    powershell.exe Start-Process PowerShell -ArgumentList '-ExecutionPolicy Bypass -File "%~dp0CKMWinFix.ps1"' -Verb RunAs
+    powershell.exe Start-Process PowerShell -ArgumentList '-ExecutionPolicy Bypass -NoProfile -File "%~dp0CKMWinFix.ps1"' -Verb RunAs
 )
-@echo off
-powershell.exe -ExecutionPolicy Bypass -NoProfile -File "%~dp0CKMWinFix.ps1"
+
 pause
+
