@@ -187,63 +187,94 @@ Function Check-SystemHealth {
 }
 
 # =========================
-# Fix Permissions (Scoped with Progress + Ownership)
+# Fix Permissions (Forced Reset + Progress + Registry Repair)
 # =========================
 Function Fix-SystemPermissions {
-    if (-not $Global:FixPermissions) {
-        Log "Permission repair disabled."
-        return
-    }
-
-    Log "Resetting user-level permissions and registry defaults..."
-    Write-Host "=== Resetting File and Registry Permissions (Scoped) ===" -ForegroundColor Yellow
+    Log "Force resetting file, registry, and service permissions..."
+    Write-Host "=== Force Resetting File, Registry, and Service Permissions ===" -ForegroundColor Yellow
 
     try {
         $user = $env:USERNAME
         $profilePath = $env:USERPROFILE
 
         # Step 1: Reset ACLs on user profile
-        Write-Progress -Activity "Fix-SystemPermissions" -Status "Resetting ACLs on user profile..." -PercentComplete 20
+        Write-Progress -Activity "Fix-SystemPermissions" -Status "Resetting ACLs on user profile..." -PercentComplete 15
         Write-Host "Resetting ACLs on $profilePath..." -ForegroundColor Cyan
         icacls "$profilePath" /reset /t /c | Out-Null
-
-        # Step 2: Grant full control back to current user
-        Write-Progress -Activity "Fix-SystemPermissions" -Status "Granting full control to $user..." -PercentComplete 40
-        Write-Host "Granting full control to $user..." -ForegroundColor Cyan
         icacls "$profilePath" /grant:r "$user:(OI)(CI)F" /t /c | Out-Null
-
-        # Step 3: Take ownership of profile folder
-        Write-Progress -Activity "Fix-SystemPermissions" -Status "Taking ownership of profile folder..." -PercentComplete 60
-        Write-Host "Taking ownership of $profilePath..." -ForegroundColor Cyan
         takeown /f "$profilePath" /r /d y | Out-Null
+        Log "ACLs reset and full control granted for $user on $profilePath."
 
-        $Global:RepairCount++
-        Log "ACLs reset, full control granted, and ownership restored for $user on $profilePath."
-
-        # Step 4: Reset ACLs on ProgramData (safe)
-        Write-Progress -Activity "Fix-SystemPermissions" -Status "Resetting ACLs on ProgramData..." -PercentComplete 80
+        # Step 2: Reset ACLs on ProgramData
+        Write-Progress -Activity "Fix-SystemPermissions" -Status "Resetting ACLs on ProgramData..." -PercentComplete 30
         Write-Host "Resetting ACLs on C:\ProgramData..." -ForegroundColor Cyan
         icacls "C:\ProgramData" /reset /t /c | Out-Null
-
-        $Global:RepairCount++
         Log "ACLs reset for ProgramData."
 
-        # Step 5: Refresh registry & security policy defaults
+        # Step 3: Reset ACLs on C:\ drive
+        Write-Progress -Activity "Fix-SystemPermissions" -Status "Resetting ACLs on C:\ drive..." -PercentComplete 45
+        Write-Host "Resetting ACLs on C:\ drive (this may take a while)..." -ForegroundColor Cyan
+        icacls "C:\" /reset /t /c | Out-Null
+        icacls "C:\" /grant:r "$user:(OI)(CI)F" /t /c | Out-Null
+        takeown /f "C:\" /r /d y | Out-Null
+        Log "ACLs reset and full control granted for $user on C:\ drive."
+
+        # Step 4: Reset registry & security policy defaults
+        Write-Progress -Activity "Fix-SystemPermissions" -Status "Refreshing registry & security policy defaults..." -PercentComplete 65
+        Write-Host "Refreshing registry & security policy defaults..." -ForegroundColor Cyan
         $DefltBase = Join-Path $env:windir "inf\defltbase.inf"
         if (Test-Path $DefltBase) {
-            Write-Progress -Activity "Fix-SystemPermissions" -Status "Refreshing registry & security policy defaults..." -PercentComplete 90
-            Write-Host "Refreshing registry & security policy defaults..." -ForegroundColor Cyan
             secedit /configure /cfg $DefltBase /db defltbase.sdb /verbose | Out-Null
-
-            $Global:RepairCount++
             Log "Registry and security policy defaults refreshed."
         } else {
-            $Global:SkippedCount++
             Log "Skipped registry defaults reset (defltbase.inf not found)."
             Write-Host "Skipped registry defaults reset (defltbase.inf not found)." -ForegroundColor Yellow
         }
 
-        # Step 6: Completed
+        # Step 5: Reset service permissions (example: Windows Update)
+        Write-Progress -Activity "Fix-SystemPermissions" -Status "Resetting service permissions..." -PercentComplete 80
+        Write-Host "Resetting service permissions..." -ForegroundColor Cyan
+        try {
+            sc.exe sdset wuauserv D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)
+            Log "Service permissions reset for Windows Update service."
+        } catch {
+            $Global:ErrorCount++
+            Log "Service permission reset error: $($_.Exception.Message)"
+            Write-Host "Service permission reset error: $($_.Exception.Message)" -ForegroundColor Red
+        }
+
+        # Step 6: Restore common ShellNew entries for "New File" menu
+        Write-Progress -Activity "Fix-SystemPermissions" -Status "Restoring ShellNew registry entries..." -PercentComplete 90
+        Write-Host "Restoring ShellNew registry entries..." -ForegroundColor Cyan
+
+        # New Text Document
+        New-Item -Path "HKCR\.txt" -Force | Out-Null
+        New-Item -Path "HKCR\.txt\ShellNew" -Force | Out-Null
+        New-ItemProperty -Path "HKCR\.txt\ShellNew" -Name "NullFile" -Value "" -Force | Out-Null
+
+        # New RTF Document
+        New-Item -Path "HKCR\.rtf" -Force | Out-Null
+        New-Item -Path "HKCR\.rtf\ShellNew" -Force | Out-Null
+        New-ItemProperty -Path "HKCR\.rtf\ShellNew" -Name "NullFile" -Value "" -Force | Out-Null
+
+        # New Word Document (.docx)
+        New-Item -Path "HKCR\.docx" -Force | Out-Null
+        New-Item -Path "HKCR\.docx\ShellNew" -Force | Out-Null
+        New-ItemProperty -Path "HKCR\.docx\ShellNew" -Name "NullFile" -Value "" -Force | Out-Null
+
+        # New Excel Document (.xlsx)
+        New-Item -Path "HKCR\.xlsx" -Force | Out-Null
+        New-Item -Path "HKCR\.xlsx\ShellNew" -Force | Out-Null
+        New-ItemProperty -Path "HKCR\.xlsx\ShellNew" -Name "NullFile" -Value "" -Force | Out-Null
+
+        # New PowerPoint Document (.pptx)
+        New-Item -Path "HKCR\.pptx" -Force | Out-Null
+        New-Item -Path "HKCR\.pptx\ShellNew" -Force | Out-Null
+        New-ItemProperty -Path "HKCR\.pptx\ShellNew" -Name "NullFile" -Value "" -Force | Out-Null
+
+        Log "ShellNew registry entries restored for .txt, .rtf, .docx, .xlsx, .pptx."
+
+        # Step 7: Completed
         Write-Progress -Activity "Fix-SystemPermissions" -Status "Completed" -PercentComplete 100
         Log "Fix-SystemPermissions Completed."
         Write-Host "=== Fix-SystemPermissions Completed ===" -ForegroundColor Green
@@ -253,6 +284,8 @@ Function Fix-SystemPermissions {
         Write-Host "Permission repair error: $($_.Exception.Message)" -ForegroundColor Red
     }
 }
+
+
 
 # =========================
 # Optimization tasks (cleanup, startup, visuals, power)
