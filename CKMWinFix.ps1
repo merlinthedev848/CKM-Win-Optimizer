@@ -60,8 +60,20 @@ Function Invoke-Section {
         }
     }
 }
-
-
+Function Check-SystemHealth {
+    Log "Running basic system health checks..."
+    Write-Host "=== System Health Check ===" -ForegroundColor Yellow
+    # Example: check free disk space
+    try {
+        $FreeSpace = Get-PSDrive C | Select-Object -ExpandProperty Free
+        Log "Free space on C: $([math]::Round($FreeSpace/1GB,2)) GB"
+        $Global:AuditCount++
+    } catch {
+        $Global:ErrorCount++
+        Log "System health check error: $($_.Exception.Message)"
+    }
+    Log "System health check completed."
+}
 # =========================
 # Final Summary Writer
 # =========================
