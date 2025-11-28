@@ -24,12 +24,13 @@ $Global:AuditCount    = 0
 $Global:LogBuffer = "$env:TEMP\CKMWinFixBuffer.log"
 if (Test-Path $Global:LogBuffer) { Remove-Item $Global:LogBuffer -Force }
 
-# Logging function (writes to buffer + console)
+# Logging function (writes to buffer + main log + console)
 Function Log {
     param ([string]$Message)
     $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $Entry = "$Timestamp : $Message"
     Add-Content -Path $Global:LogBuffer -Value $Entry
+    Add-Content -Path $LogFile -Value $Entry
     Write-Host $Entry
 }
 
