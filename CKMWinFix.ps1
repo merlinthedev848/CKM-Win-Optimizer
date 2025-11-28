@@ -156,29 +156,43 @@ Function Fix-SystemPermissions {
         # Reset ACLs only on user profile and ProgramData
         icacls "$env:USERPROFILE" /reset /t /c /q 2>$null
         icacls "C:\ProgramData" /reset /t /c /q 2>$null
+        $Global:RepairCount++
 
         # Refresh registry & security policy defaults
         secedit /configure /cfg %windir%\inf\defltbase.inf /db defltbase.sdb /verbose 2>$null
+        $Global:RepairCount++
 
         Log "User-level permissions and registry defaults reset."
     } catch {
+        $Global:ErrorCount++
         Log "Permission repair error: $($_.Exception.Message)"
     }
 
-    Log "Permission repair completed."
+    Log "Fix-SystemPermissions Completed."
 }
+
 
 # =========================
 # Optimization tasks (cleanup, startup, visuals, power)
 # =========================
 Function Optimize-System {
     Log "Starting System Optimization..."
+    Write-Host "=== System Optimization ===" -ForegroundColor Yellow
 
+    # Clean temp + prefetch
     Write-Host "Cleaning Temporary Files and Prefetch..." -ForegroundColor Yellow
-    Remove-Item "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item "C:\Windows\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item "C:\Windows\Prefetch\*" -Recurse -Force -ErrorAction SilentlyContinue
+    try {
+        Remove-Item "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item "C:\Windows\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item "C:\Windows\Prefetch\*" -Recurse -Force -ErrorAction SilentlyContinue
+        $Global:RepairCount++
+        Log "Temp and Prefetch cleaned."
+    } catch {
+        $Global:ErrorCount++
+        Log "Temp/Prefetch cleanup error: $($_.Exception.Message)"
+    }
 
+    # Clean Windows Update cache
     Write-Host "Cleaning Windows Update cache..." -ForegroundColor Yellow
     try {
         Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue
@@ -187,34 +201,69 @@ Function Optimize-System {
         Remove-Item "C:\Windows\SoftwareDistribution\DataStore\*" -Recurse -Force -ErrorAction SilentlyContinue
         Remove-Item "C:\ProgramData\USOShared\Logs\*" -Recurse -Force -ErrorAction SilentlyContinue
         Remove-Item "C:\ProgramData\Microsoft\Windows\DeliveryOptimization\*" -Recurse -Force -ErrorAction SilentlyContinue
-    } catch { Log "Update cache cleanup error: $_" }
-    finally {
+        $Global:RepairCount++
+        Log "Windows Update cache cleaned."
+    } catch {
+        $Global:ErrorCount++
+        Log "Update cache cleanup error: $($_.Exception.Message)"
+    } finally {
         Start-Service -Name bits -ErrorAction SilentlyContinue
         Start-Service -Name wuauserv -ErrorAction SilentlyContinue
     }
 
+    # Empty recycle bin
     Write-Host "Emptying Recycle Bin..." -ForegroundColor Yellow
-    try { Clear-RecycleBin -Force -ErrorAction SilentlyContinue } catch {}
+    try {
+        Clear-RecycleBin -Force -ErrorAction SilentlyContinue
+        $Global:RepairCount++
+        Log "Recycle Bin emptied."
+    } catch {
+        $Global:ErrorCount++
+        Log "Recycle Bin cleanup error: $($_.Exception.Message)"
+    }
 
+    # Disable non-Microsoft startup items
     Write-Host "Disabling non-Microsoft startup items..." -ForegroundColor Yellow
     try {
-        Get-CimInstance -Namespace "root\cimv2" -Class Win32_StartupCommand | Where-Object { $_.Command -notlike "*Windows*" } | ForEach-Object {
-            Remove-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name $_.Name -ErrorAction SilentlyContinue
-            Remove-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name $_.Name -ErrorAction SilentlyContinue
-        }
-    } catch { Log "Startup cleanup error: $_" }
+        Get-CimInstance -Namespace "root\cimv2" -Class Win32_StartupCommand |
+            Where-Object { $_.Command -notlike "*Windows*" } |
+            ForEach-Object {
+                Remove-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name $_.Name -ErrorAction SilentlyContinue
+                Remove-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name $_.Name -ErrorAction SilentlyContinue
+                $Global:RepairCount++
+                Log "Disabled startup item: $($_.Name)"
+            }
+    } catch {
+        $Global:ErrorCount++
+        Log "Startup cleanup error: $($_.Exception.Message)"
+    }
 
+    # Optimize visual effects
     Write-Host "Optimizing visual effects..." -ForegroundColor Yellow
     try {
         Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" -Name "VisualFXSetting" -Value 2 -ErrorAction SilentlyContinue
         Set-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name "UserPreferencesMask" -Value ([byte[]](0x90,0x12,0x03,0x80,0x10,0x00,0x00,0x00)) -ErrorAction SilentlyContinue
-    } catch { Log "Visual effects tweak error: $_" }
+        $Global:RepairCount++
+        Log "Visual effects optimized."
+    } catch {
+        $Global:ErrorCount++
+        Log "Visual effects tweak error: $($_.Exception.Message)"
+    }
 
+    # Set power plan
     Write-Host "Setting Power Plan to High Performance..." -ForegroundColor Yellow
-    try { powercfg -setactive SCHEME_MIN } catch { Log "Power plan error: $_" }
+    try {
+        powercfg -setactive SCHEME_MIN
+        $Global:RepairCount++
+        Log "Power plan set to High Performance."
+    } catch {
+        $Global:ErrorCount++
+        Log "Power plan error: $($_.Exception.Message)"
+    }
 
     Log "Optimization Completed."
 }
+
 # =========================
 # Automated troubleshooting (SFC, DISM, DNS)
 # =========================
@@ -568,49 +617,78 @@ Function Debloat-Windows {
 
 
 # =========================
-# Windows updates (PSWindowsUpdate or USOClient fallback)
+# Check Windows Updates
 # =========================
 Function Check-WindowsUpdates {
     Log "Checking for Windows Updates..."
-    Write-Host "Checking for Windows Updates..." -ForegroundColor Yellow
-    if (Get-Command Get-WindowsUpdate -ErrorAction SilentlyContinue) {
-        try {
-            Get-WindowsUpdate -Install -AcceptAll -AutoReboot | Out-Null
-            Log "Windows Updates installed via PSWindowsUpdate."
-        } catch {
-            Log "Error running Get-WindowsUpdate: $_"
-            Write-Host "An error occurred while checking updates: $_" -ForegroundColor Red
-        }
-    } else {
-        try {
-            UsoClient StartScan
-            UsoClient StartDownload
-            UsoClient StartInstall
-            Log "Windows Updates triggered via USOClient."
-        } catch { Log "USOClient update trigger error: $_" }
-    }
-}
-# =========================
-# Driver and Software Auto update
-# =========================
-Function Update-System {
-    Log "Starting driver and software updates..."
-    Write-Host "=== Updating Drivers and Software ===" -ForegroundColor Yellow
+    Write-Host "=== Checking Windows Updates ===" -ForegroundColor Yellow
 
     try {
-        Write-Host "Checking for driver updates..." -ForegroundColor Cyan
-        Get-WindowsUpdate -MicrosoftUpdate -AcceptAll -Install -IgnoreReboot | Out-Host
-        Log "Driver updates applied."
+        Import-Module PSWindowsUpdate -ErrorAction SilentlyContinue
 
-        Write-Host "Updating installed applications..." -ForegroundColor Cyan
-        winget upgrade --all --silent | Out-Host
-        Log "Software updates applied."
+        if (Get-Command Get-WindowsUpdate -ErrorAction SilentlyContinue) {
+            $updates = Get-WindowsUpdate -AcceptAll -IgnoreReboot
+            if ($updates) {
+                $Global:UpdateCount += $updates.Count
+                Log "Applied $($updates.Count) Windows updates."
+            } else {
+                $Global:SkippedCount++
+                Log "No Windows updates available."
+            }
+        } else {
+            # Fallback to USOClient
+            Log "PSWindowsUpdate not available, using USOClient..."
+            Start-Process -FilePath "usoclient.exe" -ArgumentList "StartScan" -Wait
+            $Global:RepairCount++
+        }
     } catch {
-        Log "Update error: $_"
+        $Global:ErrorCount++
+        Log "Windows Update error: $($_.Exception.Message)"
     }
 
-    Log "Driver and software updates completed."
+    Log "Windows Update check completed."
 }
+
+# =========================
+# Update System (Drivers + Winget Apps)
+# =========================
+Function Update-System {
+    Log "Updating drivers and Winget apps..."
+    Write-Host "=== Updating System ===" -ForegroundColor Yellow
+
+    try {
+        # Update drivers via pnputil
+        try {
+            pnputil /scan-devices | Out-Null
+            $Global:UpdateCount++
+            Log "Driver scan completed."
+        } catch {
+            $Global:ErrorCount++
+            Log "Driver update error: $($_.Exception.Message)"
+        }
+
+        # Update apps via Winget
+        try {
+            $updates = winget upgrade --accept-source-agreements --accept-package-agreements
+            if ($updates) {
+                $Global:UpdateCount++
+                Log "Winget apps updated."
+            } else {
+                $Global:SkippedCount++
+                Log "No Winget updates available."
+            }
+        } catch {
+            $Global:ErrorCount++
+            Log "Winget update error: $($_.Exception.Message)"
+        }
+    } catch {
+        $Global:ErrorCount++
+        Log "System update error: $($_.Exception.Message)"
+    }
+
+    Log "System update completed."
+}
+
 # =========================
 # Network optimization
 # =========================
