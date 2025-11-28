@@ -400,9 +400,14 @@ Function Debloat-Windows {
 # Debloat Unused Apps
 # =========================
 Function Audit-InstalledSoftware {
-    Log "Auditing installed software for unused programs..."
+    param(
+        [switch]$AutoRemoveUnused,   # If set, removes unused apps without prompting
+        [int]$Months = 6             # Default cutoff = 6 months
+    )
 
-    $Cutoff = (Get-Date).AddMonths(-6)
+    Log "Auditing installed software for unused programs (>$Months months)..."
+
+    $Cutoff = (Get-Date).AddMonths(-$Months)
 
     try {
         $Software = Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*,HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\* -ErrorAction SilentlyContinue |
@@ -421,13 +426,13 @@ Function Audit-InstalledSoftware {
             }
 
             if ($parsedDate -and $parsedDate -lt $Cutoff) {
-                $response = Read-Host "Remove $friendlyName (last used/installed $parsedDate)? (Y/N)"
-                if ($response -match '^[Yy]$') {
+                if ($AutoRemoveUnused) {
+                    # Silent removal
                     try {
                         $UninstallString = $App.UninstallString
                         if ($UninstallString) {
                             Start-Process -FilePath "cmd.exe" -ArgumentList "/c $UninstallString" -Wait
-                            Log "Removed unused software: $friendlyName"
+                            Log "Auto-removed unused software: $friendlyName"
                         } else {
                             Log "No uninstall string for: $friendlyName"
                         }
@@ -435,7 +440,23 @@ Function Audit-InstalledSoftware {
                         Log "Error uninstalling $friendlyName: $_"
                     }
                 } else {
-                    Log "User chose to keep: $friendlyName"
+                    # Interactive prompt
+                    $response = Read-Host "Remove $friendlyName (last used/installed $parsedDate)? (Y/N)"
+                    if ($response -match '^[Yy]$') {
+                        try {
+                            $UninstallString = $App.UninstallString
+                            if ($UninstallString) {
+                                Start-Process -FilePath "cmd.exe" -ArgumentList "/c $UninstallString" -Wait
+                                Log "Removed unused software: $friendlyName"
+                            } else {
+                                Log "No uninstall string for: $friendlyName"
+                            }
+                        } catch {
+                            Log "Error uninstalling $friendlyName: $_"
+                        }
+                    } else {
+                        Log "User chose to keep: $friendlyName"
+                    }
                 }
             } else {
                 Log "Kept: $friendlyName (recently used or no usage data)"
@@ -445,8 +466,9 @@ Function Audit-InstalledSoftware {
         Log "Software audit error: $($_.Exception.Message)"
     }
 
-    Log "Interactive software audit completed."
+    Log "Software audit completed."
 }
+
 
 # =========================
 # Windows updates (PSWindowsUpdate or USOClient fallback)
@@ -672,6 +694,7 @@ Function Write-FinalSummary {
     Add-Content -Path $LogFile -Value " Script Execution Completed Successfully"
     Add-Content -Path $LogFile -Value "-------------------------------------------------------------------------------"
 }
+
 # =========================
 # Main Execution
 # =========================
@@ -695,6 +718,7 @@ try {
     # 4. Security and debloat
     Run-SecurityScans         # Defender signature update + scan
     Debloat-Windows           # Curated removals + telemetry off
+    Audit-InstalledSoftware   # NEW: Interactive removal of unused programs (>6 months)
 
     # 5. Updates and performance
     Check-WindowsUpdates      # OS updates (PSWindowsUpdate/USOClient)
