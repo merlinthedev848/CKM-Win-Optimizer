@@ -55,8 +55,11 @@ Function Invoke-Section {
             Log "Section '$SectionName' completed."
         } catch {
             $Global:ErrorCount++
-            Log "Error in section $SectionName: $($_.Exception.Message)"
-            Write-Host "Error in section $SectionName: $($_.Exception.Message)" -ForegroundColor Red
+            Log "Error in section ${SectionName}: $($_.Exception.Message)"
+            Write-Host "Error in section ${SectionName}: $($_.Exception.Message)" -ForegroundColor Red
+}
+
+
         }
     }
 }
@@ -1047,10 +1050,12 @@ Function Audit-InstalledSoftware {
                             Write-Host "No uninstall string for: $friendlyName" -ForegroundColor Cyan
                         }
                     } catch {
-                        $Global:ErrorCount++
-                        Log "Error uninstalling $friendlyName: $($_.Exception.Message)"
-                        Write-Host "Error uninstalling $friendlyName: $($_.Exception.Message)" -ForegroundColor Red
+                            $Global:ErrorCount++
+                            Log "Error uninstalling ${friendlyName}: $($_.Exception.Message)"
+                            Write-Host "Error uninstalling ${friendlyName}: $($_.Exception.Message)" -ForegroundColor Red
                     }
+
+
                 } else {
                     $response = Read-Host "Remove $friendlyName (installed $parsedDate)? (Y/N)"
                     if ($response -match '^[Yy]$') {
