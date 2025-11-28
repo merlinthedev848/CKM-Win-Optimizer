@@ -1,4 +1,4 @@
-# ========================= 
+# =========================
 # Setup and logging
 # =========================
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -44,12 +44,44 @@ Function Invoke-Section {
     if ($response -match '^\s+$') {
         Log "Skipped section: $SectionName"
         Write-Host "=== Skipped $SectionName ===" -ForegroundColor Cyan
+        $Global:SkippedCount++
     } else {
         Log "Running section: $SectionName"
         Write-Host "=== Running $SectionName ===" -ForegroundColor Yellow
         & $Action
     }
 }
+
+# =========================
+# Final Summary Writer
+# =========================
+Function Write-FinalSummary {
+    try {
+        $summary = @()
+        $summary += "=== CKMWinFix Summary ==="
+        $summary += "System Health Checks: Completed"
+        $summary += "Repairs Applied: $Global:RepairCount"
+        $summary += "Apps Removed: $Global:RemovedCount"
+        $summary += "Apps Skipped: $Global:SkippedCount"
+        $summary += "Errors: $Global:ErrorCount"
+        $summary += "Updates Applied: $Global:UpdateCount"
+        $summary += "Backup Status: $Global:BackupStatus"
+        $summary += "Audit Findings: $Global:AuditCount"
+        $summary += "==========================="
+
+        # Write summary first
+        $summary | Out-File -FilePath $LogFile -Encoding UTF8
+
+        # Append enhanced log history
+        Add-Content -Path $LogFile -Value "`n=== Enhanced Log ===`n"
+        Get-Content $Global:LogBuffer | Add-Content -Path $LogFile
+
+        Write-Host "Final summary and enhanced log written to: $LogFile" -ForegroundColor Cyan
+    } catch {
+        Write-Host "Error writing final summary: $($_.Exception.Message)" -ForegroundColor Red
+    }
+}
+
 
 # =========================
 # Feature toggles
@@ -431,77 +463,108 @@ Function Debloat-Windows {
 }
 
 # =========================
-# Debloat Unused Apps
+# Debloat Windows
 # =========================
-Function Audit-InstalledSoftware {
-    param(
-        [switch]$AutoRemoveUnused,   # If set, removes unused apps without prompting
-        [int]$Months = 6             # Default cutoff = 6 months
-    )
+Function Debloat-Windows {
+    if (-not $Global:EnableDebloat) { Log "Debloat disabled."; return }
 
-    Log "Auditing installed software for unused programs (>$Months months)..."
-
-    $Cutoff = (Get-Date).AddMonths(-$Months)
+    Log "Debloating Windows apps and features..."
 
     try {
-        $Software = Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*,HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\* -ErrorAction SilentlyContinue |
-                    Where-Object { $_.DisplayName } |
-                    Sort-Object DisplayName
+        # Protected apps that should never be removed
+        $ProtectedApps = @(
+            "windows.immersivecontrolpanel",
+            "Microsoft.Edge",
+            "Microsoft.Windows.ShellExperienceHost",
+            "Microsoft.Windows.StartMenuExperienceHost",
+            "Microsoft.WindowsStore",
+            "Microsoft.WindowsCalculator",
+            "Microsoft.WindowsNotepad",
+            "Microsoft.Windows.Photos",
+            "Microsoft.AAD.BrokerPlugin",
+            "Microsoft.Windows.Search",
+            "Microsoft.Copilot",
+            "MicrosoftTeams",
+            "MicrosoftWindows.Client.WebExperience",
+            "Microsoft.XboxApp",
+            "Microsoft.XboxGamingOverlay",
+            "Microsoft.XboxIdentityProvider"
+        )
 
-        foreach ($App in $Software) {
-            $friendlyName = $App.DisplayName
-            $lastUsed = $App.InstallDate
+        # Curated safe-to-remove apps
+        $DebloatTargets = @(
+            "Microsoft.3DBuilder",
+            "Microsoft.MSPaint",
+            "Microsoft.Microsoft3DViewer",
+            "Microsoft.SkypeApp",
+            "Microsoft.ZuneMusic",
+            "Microsoft.ZuneVideo",
+            "Microsoft.GetHelp",
+            "Microsoft.Getstarted",
+            "Microsoft.MicrosoftSolitaireCollection",
+            "Microsoft.People",
+            "Microsoft.OneConnect",
+            "Microsoft.MixedReality.Portal",
+            "Microsoft.YourPhone",
+            "Microsoft.MicrosoftOfficeHub"
+        )
 
-            # Convert InstallDate if present (format: YYYYMMDD)
-            if ($lastUsed -and $lastUsed -match '^\d{8}$') {
-                $parsedDate = [datetime]::ParseExact($lastUsed, 'yyyyMMdd', $null)
-            } else {
-                $parsedDate = $null
-            }
-
-            if ($parsedDate -and $parsedDate -lt $Cutoff) {
-                if ($AutoRemoveUnused) {
-                    # Silent removal
+        foreach ($Target in $DebloatTargets) {
+            $App = Get-AppxPackage -AllUsers | Where-Object { $_.Name -eq $Target }
+            if ($App) {
+                $friendlyName = if ($App.DisplayName) { $App.DisplayName } else { $App.Name }
+                $response = Read-Host "Do you want to remove $friendlyName? (Y/N)"
+                if ($response -match '^[Yy]$') {
                     try {
-                        $UninstallString = $App.UninstallString
-                        if ($UninstallString) {
-                            Start-Process -FilePath "cmd.exe" -ArgumentList "/c $UninstallString" -Wait
-                            Log "Auto-removed unused software: $friendlyName"
+                        Remove-AppxPackage -Package $App.PackageFullName -AllUsers -ErrorAction SilentlyContinue
+                        if ($?) {
+                            $Global:RemovedCount++
+                            Log "Removed: $friendlyName"
                         } else {
-                            Log "No uninstall string for: $friendlyName"
+                            $Global:SkippedCount++
+                            Log "Skipped: $friendlyName"
                         }
                     } catch {
-                        Log "Error uninstalling $friendlyName: $_"
+                        $Global:ErrorCount++
+                        Log "Error removing: $friendlyName"
                     }
                 } else {
-                    # Interactive prompt
-                    $response = Read-Host "Remove $friendlyName (last used/installed $parsedDate)? (Y/N)"
-                    if ($response -match '^[Yy]$') {
-                        try {
-                            $UninstallString = $App.UninstallString
-                            if ($UninstallString) {
-                                Start-Process -FilePath "cmd.exe" -ArgumentList "/c $UninstallString" -Wait
-                                Log "Removed unused software: $friendlyName"
-                            } else {
-                                Log "No uninstall string for: $friendlyName"
-                            }
-                        } catch {
-                            Log "Error uninstalling $friendlyName: $_"
-                        }
-                    } else {
-                        Log "User chose to keep: $friendlyName"
-                    }
+                    $Global:SkippedCount++
+                    Log "User chose to keep: $friendlyName"
                 }
             } else {
-                Log "Kept: $friendlyName (recently used or no usage data)"
+                Log "Not present: $Target"
+            }
+        }
+
+        foreach ($App in $ProtectedApps) {
+            Log "Skipped (protected): $App"
+        }
+
+        # Telemetry disable remains automatic
+        Log "Disabling telemetry via registry..."
+        New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Force | Out-Null
+        Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "AllowTelemetry" -Value 0 -Type DWord -ErrorAction SilentlyContinue
+
+        $TelemetryServices = @("DiagTrack","dmwappushservice","WerSvc","PcaSvc")
+        foreach ($svc in $TelemetryServices) {
+            try {
+                Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue
+                Set-Service -Name $svc -StartupType Disabled -ErrorAction SilentlyContinue
+                Log "Disabled telemetry service: $svc"
+            } catch {
+                Log "Skipped (protected or not present): $svc"
             }
         }
     } catch {
-        Log "Software audit error: $($_.Exception.Message)"
+        $Global:ErrorCount++
+        Log "Debloat error: $($_.Exception.Message)"
     }
 
-    Log "Software audit completed."
+    Write-Progress -Activity "Debloating Windows" -Completed
+    Log "Debloat Completed."
 }
+
 
 
 # =========================
@@ -704,36 +767,6 @@ Function Schedule-Task {
 
     Log "Task Scheduling Completed."
 }
-# =========================
-# Final Summary Writer
-# =========================
-Function Write-FinalSummary {
-    try {
-        $summary = @()
-        $summary += "=== CKMWinFix Summary ==="
-        $summary += "System Health Checks: Completed"
-        $summary += "Repairs Applied: $Global:RepairCount"
-        $summary += "Apps Removed: $Global:RemovedCount"
-        $summary += "Apps Skipped: $Global:SkippedCount"
-        $summary += "Errors: $Global:ErrorCount"
-        $summary += "Updates Applied: $Global:UpdateCount"
-        $summary += "Backup Status: $Global:BackupStatus"
-        $summary += "Audit Findings: $Global:AuditCount"
-        $summary += "==========================="
-
-        # Write summary first
-        $summary | Out-File -FilePath $LogFile -Encoding UTF8
-
-        # Append enhanced log history
-        Add-Content -Path $LogFile -Value "`n=== Enhanced Log ===`n"
-        Get-Content $Global:LogBuffer | Add-Content -Path $LogFile
-
-        Write-Host "Final summary and enhanced log written to: $LogFile" -ForegroundColor Cyan
-    } catch {
-        Write-Host "Error writing final summary: $($_.Exception.Message)" -ForegroundColor Red
-    }
-}
-
 
 # =========================
 # Main Execution
@@ -749,13 +782,18 @@ try {
 
     Invoke-Section "Core repairs and cleanup" {
         Troubleshoot-Issues       # SFC, DISM, DNS
+        $Global:RepairCount++
         Fix-SystemPermissions     # Reset ACLs and registry defaults
+        $Global:RepairCount++
         Optimize-System           # Temp/cache cleanup, startup, visuals, power plan
+        $Global:RepairCount++
     }
 
     Invoke-Section "Storage and integrity" {
         Optimize-Storage          # Defrag HDDs, TRIM SSDs
+        $Global:RepairCount++
         Check-DiskIntegrity       # Health status of physical disks
+        $Global:RepairCount++
     }
 
     Invoke-Section "Security and debloat" {
@@ -767,14 +805,17 @@ try {
     Invoke-Section "Updates and performance" {
         Check-WindowsUpdates      # OS updates (PSWindowsUpdate/USOClient)
         Update-System             # Drivers + Winget apps
+        $Global:UpdateCount++
         Optimize-NetworkAuto      # Adapter detection + speed visuals
         Compare-PerformanceBaseline
     }
 
     Invoke-Section "Backup and audit" {
         Backup-UserData
+        $Global:BackupStatus = "Success"
         Analyze-EventLogs
         Audit-Software
+        $Global:AuditCount++
     }
 
     Invoke-Section "Scheduling and summary" {
