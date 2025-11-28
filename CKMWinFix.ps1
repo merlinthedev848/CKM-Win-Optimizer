@@ -20,16 +20,11 @@ $Global:UpdateCount   = 0
 $Global:BackupStatus  = "Not Run"
 $Global:AuditCount    = 0
 
-# Buffer file for enhanced log
-$Global:LogBuffer = "$env:TEMP\CKMWinFixBuffer.log"
-if (Test-Path $Global:LogBuffer) { Remove-Item $Global:LogBuffer -Force }
-
-# Logging function (writes to buffer + main log + console)
+# Logging function (writes directly to file + console)
 Function Log {
     param ([string]$Message)
     $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $Entry = "$Timestamp : $Message"
-    Add-Content -Path $Global:LogBuffer -Value $Entry
     Add-Content -Path $LogFile -Value $Entry
     Write-Host $Entry
 }
@@ -70,18 +65,13 @@ Function Write-FinalSummary {
         $summary += "Audit Findings: $Global:AuditCount"
         $summary += "==========================="
 
-        # Write summary first
-        $summary | Out-File -FilePath $LogFile -Encoding UTF8
-
-        # Append enhanced log history
-        Add-Content -Path $LogFile -Value "`n=== Enhanced Log ===`n"
-        Get-Content $Global:LogBuffer | Add-Content -Path $LogFile
-
-        Write-Host "Final summary and enhanced log written to: $LogFile" -ForegroundColor Cyan
+        Add-Content -Path $LogFile -Value "`n$($summary -join "`n")"
+        Write-Host "Final summary written to: $LogFile" -ForegroundColor Cyan
     } catch {
         Write-Host "Error writing final summary: $($_.Exception.Message)" -ForegroundColor Red
     }
 }
+
 
 
 # =========================
@@ -309,19 +299,29 @@ Function Optimize-Storage {
             Write-Host "Media Type: $($Disk.MediaType)" -ForegroundColor Green
             Log "Detected disk: $($Disk.FriendlyName) [$($Disk.MediaType)]"
 
-            if ($Disk.MediaType -eq "HDD") {
-                Write-Host "Running defrag on HDD..." -ForegroundColor Yellow
-                Optimize-Volume -DriveLetter $Disk.DeviceID -Defrag -Verbose
-                Log "Defrag completed on $($Disk.FriendlyName)"
-            }
-            elseif ($Disk.MediaType -eq "SSD") {
-                Write-Host "Running TRIM optimization on SSD..." -ForegroundColor Yellow
-                Optimize-Volume -DriveLetter $Disk.DeviceID -ReTrim -Verbose
-                Log "TRIM optimization completed on $($Disk.FriendlyName)"
-            }
-            else {
-                Write-Host "Skipping unknown media type: $($Disk.MediaType)" -ForegroundColor Yellow
-                Log "Skipped disk $($Disk.FriendlyName) (unknown type)"
+            # Map disk → partitions → volumes
+            $Partitions = Get-Partition -DiskNumber $Disk.DeviceID -ErrorAction SilentlyContinue
+            foreach ($Partition in $Partitions) {
+                $Volume = Get-Volume -Partition $Partition -ErrorAction SilentlyContinue
+                if ($Volume -and $Volume.DriveLetter) {
+                    if ($Disk.MediaType -eq "HDD") {
+                        Write-Host "Running defrag on HDD volume $($Volume.DriveLetter)..." -ForegroundColor Yellow
+                        Optimize-Volume -DriveLetter $Volume.DriveLetter -Defrag -Verbose
+                        $Global:RepairCount++
+                        Log "Defrag completed on $($Disk.FriendlyName) volume $($Volume.DriveLetter)"
+                    }
+                    elseif ($Disk.MediaType -eq "SSD") {
+                        Write-Host "Running TRIM optimization on SSD volume $($Volume.DriveLetter)..." -ForegroundColor Yellow
+                        Optimize-Volume -DriveLetter $Volume.DriveLetter -ReTrim -Verbose
+                        $Global:RepairCount++
+                        Log "TRIM optimization completed on $($Disk.FriendlyName) volume $($Volume.DriveLetter)"
+                    }
+                    else {
+                        $Global:SkippedCount++
+                        Write-Host "Skipping unknown media type: $($Disk.MediaType)" -ForegroundColor Yellow
+                        Log "Skipped disk $($Disk.FriendlyName) (unknown type)"
+                    }
+                }
             }
         }
 
@@ -337,6 +337,7 @@ Function Optimize-Storage {
             Add-Content -Path $LogFile -Value $Line
         }
     } catch {
+        $Global:ErrorCount++
         Log "Storage optimization error: $($_.Exception.Message)"
         Write-Host "Error during storage optimization: $($_.Exception.Message)" -ForegroundColor Red
     }
@@ -344,6 +345,7 @@ Function Optimize-Storage {
     Log "Storage Optimization Completed."
     Write-Host "=== Storage Optimization Completed ===" -ForegroundColor Green
 }
+
 # =========================
 # Disk Integrity
 # =========================
@@ -452,96 +454,6 @@ Function Run-SecurityScans {
 Function Debloat-Windows {
     if (-not $Global:EnableDebloat) { Log "Debloat disabled."; return }
 
-    Log "Debloating Windows apps and features for $ProductName ..."
-
-    try {
-        # Protected apps that should never be removed
-        $ProtectedApps = @(
-            "windows.immersivecontrolpanel",
-            "Microsoft.Edge",
-            "Microsoft.Windows.ShellExperienceHost",
-            "Microsoft.Windows.StartMenuExperienceHost",
-            "Microsoft.WindowsStore",
-            "Microsoft.WindowsCalculator",
-            "Microsoft.WindowsNotepad",
-            "Microsoft.Windows.Photos",
-            "Microsoft.AAD.BrokerPlugin",
-            "Microsoft.Windows.Search",
-            "Microsoft.Copilot",
-            "MicrosoftTeams",
-            "MicrosoftWindows.Client.WebExperience",
-            "Microsoft.XboxApp",
-            "Microsoft.XboxGamingOverlay",
-            "Microsoft.XboxIdentityProvider"
-        )
-
-        # Curated safe-to-remove apps
-        $DebloatTargets = @(
-            "Microsoft.3DBuilder",
-            "Microsoft.MSPaint",
-            "Microsoft.Microsoft3DViewer",
-            "Microsoft.SkypeApp",
-            "Microsoft.ZuneMusic",
-            "Microsoft.ZuneVideo",
-            "Microsoft.GetHelp",
-            "Microsoft.Getstarted",
-            "Microsoft.MicrosoftSolitaireCollection",
-            "Microsoft.People",
-            "Microsoft.OneConnect",
-            "Microsoft.MixedReality.Portal",
-            "Microsoft.YourPhone",
-            "Microsoft.MicrosoftOfficeHub"
-        )
-
-        foreach ($Target in $DebloatTargets) {
-            $App = Get-AppxPackage -AllUsers | Where-Object { $_.Name -eq $Target }
-            if ($App) {
-                $friendlyName = if ($App.DisplayName) { $App.DisplayName } else { $App.Name }
-                $response = Read-Host "Do you want to remove $friendlyName? (Y/N)"
-                if ($response -match '^[Yy]$') {
-                    try {
-                        Remove-AppxPackage -Package $App.PackageFullName -AllUsers -ErrorAction SilentlyContinue
-                        if ($?) { Log "Removed: $friendlyName" } else { Log "Skipped: $friendlyName" }
-                    } catch { Log "Skipped (error): $friendlyName" }
-                } else {
-                    Log "User chose to keep: $friendlyName"
-                }
-            } else {
-                Log "Not present: $Target"
-            }
-        }
-
-        foreach ($App in $ProtectedApps) {
-            Log "Skipped (protected): $App"
-        }
-
-        # Telemetry disable remains automatic
-        Log "Disabling telemetry via registry..."
-        New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Force | Out-Null
-        Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "AllowTelemetry" -Value 0 -Type DWord -ErrorAction SilentlyContinue
-
-        $TelemetryServices = @("DiagTrack","dmwappushservice","WerSvc","PcaSvc")
-        foreach ($svc in $TelemetryServices) {
-            try {
-                Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue
-                Set-Service -Name $svc -StartupType Disabled -ErrorAction SilentlyContinue
-                Log "Disabled telemetry service: $svc"
-            } catch { Log "Skipped (protected or not present): $svc" }
-        }
-    } catch {
-        Log "Debloat error: $($_.Exception.Message)"
-    }
-
-    Write-Progress -Activity "Debloating Windows" -Completed
-    Log "Debloat Completed."
-}
-
-# =========================
-# Debloat Windows
-# =========================
-Function Debloat-Windows {
-    if (-not $Global:EnableDebloat) { Log "Debloat disabled."; return }
-
     Log "Debloating Windows apps and features..."
 
     try {
@@ -627,6 +539,7 @@ Function Debloat-Windows {
                 Set-Service -Name $svc -StartupType Disabled -ErrorAction SilentlyContinue
                 Log "Disabled telemetry service: $svc"
             } catch {
+                $Global:SkippedCount++
                 Log "Skipped (protected or not present): $svc"
             }
         }
@@ -638,8 +551,6 @@ Function Debloat-Windows {
     Write-Progress -Activity "Debloating Windows" -Completed
     Log "Debloat Completed."
 }
-
-
 
 # =========================
 # Check Windows Updates
@@ -654,8 +565,9 @@ Function Check-WindowsUpdates {
         if (Get-Command Get-WindowsUpdate -ErrorAction SilentlyContinue) {
             $updates = Get-WindowsUpdate -AcceptAll -IgnoreReboot
             if ($updates) {
+                Install-WindowsUpdate -AcceptAll -IgnoreReboot -AutoReboot:$false
                 $Global:UpdateCount += $updates.Count
-                Log "Applied $($updates.Count) Windows updates."
+                Log "Installed $($updates.Count) Windows updates."
             } else {
                 $Global:SkippedCount++
                 Log "No Windows updates available."
@@ -694,13 +606,13 @@ Function Update-System {
 
         # Update apps via Winget
         try {
-            $updates = winget upgrade --accept-source-agreements --accept-package-agreements
-            if ($updates) {
+            $proc = Start-Process winget -ArgumentList 'upgrade --accept-source-agreements --accept-package-agreements --silent' -NoNewWindow -PassThru -Wait
+            if ($proc.ExitCode -eq 0) {
                 $Global:UpdateCount++
-                Log "Winget apps updated."
+                Log "Winget upgrade executed successfully."
             } else {
-                $Global:SkippedCount++
-                Log "No Winget updates available."
+                $Global:ErrorCount++
+                Log "Winget upgrade failed with exit code $($proc.ExitCode)."
             }
         } catch {
             $Global:ErrorCount++
@@ -713,6 +625,7 @@ Function Update-System {
 
     Log "System update completed."
 }
+
 
 # =========================
 # Network optimization
@@ -737,6 +650,7 @@ Function Optimize-NetworkAuto {
             }
             $Results += $Result
 
+            $Global:AuditCount++
             Log "Adapter: $($Adapter.Name) [$Desc] Speed: $NegotiatedMbps Mbps"
         }
 
@@ -744,17 +658,23 @@ Function Optimize-NetworkAuto {
         Add-Content -Path $LogFile -Value "`n=== Speedtest Visual ==="
         foreach ($Result in $Results) {
             $Bars = [math]::Round($Result.SpeedMbps / 100)
+            if ($Bars -lt 1) { $Bars = 1 } # ensure at least one bar
             $BarString = ($Global:BarChar * $Bars)
             $Line = ("{0,-20} {1,6} Mbps | {2}" -f $Result.Adapter, $Result.SpeedMbps, $BarString)
             Write-Host $Line -ForegroundColor Cyan
             Add-Content -Path $LogFile -Value $Line
         }
     } catch {
+        $Global:ErrorCount++
         Log "Network optimization error: $($_.Exception.Message)"
+        Write-Host "Error during network optimization: $($_.Exception.Message)" -ForegroundColor Red
     }
 
     Log "Network Optimization Completed."
+    Write-Host "=== Network Optimization Completed ===" -ForegroundColor Green
 }
+
+
 # =========================
 # Performance Baseline
 # =========================
