@@ -498,21 +498,24 @@ Function Check-DiskIntegrity {
 # Security scans (Windows Defender)
 # =========================
 Function Ensure-Defender {
-    Log "Checking Windows Defender installation..."
+    Log "Checking Windows Defender status..."
     try {
-        $DefenderFeature = Get-WindowsOptionalFeature -Online -FeatureName Windows-Defender-Features -ErrorAction SilentlyContinue
-        if ($DefenderFeature.State -ne "Enabled") {
-            Write-Host "Windows Defender is not enabled. Installing..." -ForegroundColor Yellow
-            Enable-WindowsOptionalFeature -Online -FeatureName Windows-Defender-Features -All -NoRestart | Out-Null
-            $Global:RepairCount++
-            Log "Windows Defender feature enabled."
+        $service = Get-Service -Name WinDefend -ErrorAction SilentlyContinue
+        if ($service -and $service.Status -eq 'Running') {
+            Log "Windows Defender is running."
+            Write-Host "Windows Defender is running." -ForegroundColor Green
+        } elseif ($service) {
+            Start-Service -Name WinDefend
+            Log "Windows Defender service started."
+            Write-Host "Windows Defender service started." -ForegroundColor Yellow
         } else {
-            Log "Windows Defender is already enabled."
+            Log "Windows Defender service not found on this system."
+            Write-Host "Windows Defender service not found." -ForegroundColor Red
         }
     } catch {
         $Global:ErrorCount++
-        Log "Failed to check/enable Windows Defender: $($_.Exception.Message)"
-        Write-Host "Failed to check/enable Windows Defender: $($_.Exception.Message)" -ForegroundColor Red
+        Log "Failed to check/start Windows Defender: $($_.Exception.Message)"
+        Write-Host "Failed to check/start Windows Defender: $($_.Exception.Message)" -ForegroundColor Red
     }
 }
 
