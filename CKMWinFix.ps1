@@ -36,13 +36,12 @@ Function Log {
     Write-Host $Entry
 }
 
-# Section runner with skip option
+# Section runner (interactive skip)
 Function Invoke-Section {
     param(
         [string]$SectionName,
         [scriptblock]$Action
     )
-
     $response = Read-Host "Press [Space] + Enter to skip $SectionName, or just Enter to run"
     if ($response -match '^\s+$') {
         Log "Skipped section: $SectionName"
@@ -53,6 +52,7 @@ Function Invoke-Section {
         Write-Host "=== Running $SectionName ===" -ForegroundColor Yellow
         try {
             & $Action
+            Log "Section '$SectionName' completed."
         } catch {
             $Global:ErrorCount++
             Log "Error in section $SectionName: $($_.Exception.Message)"
@@ -60,10 +60,11 @@ Function Invoke-Section {
         }
     }
 }
+
+# Basic system health check
 Function Check-SystemHealth {
     Log "Running basic system health checks..."
     Write-Host "=== System Health Check ===" -ForegroundColor Yellow
-    # Example: check free disk space
     try {
         $FreeSpace = Get-PSDrive C | Select-Object -ExpandProperty Free
         Log "Free space on C: $([math]::Round($FreeSpace/1GB,2)) GB"
@@ -74,31 +75,32 @@ Function Check-SystemHealth {
     }
     Log "System health check completed."
 }
+
 # =========================
 # Final Summary Writer
 # =========================
 Function Write-FinalSummary {
     try {
-        $summary = @()
-        $summary += "=== CKMWinFix Summary ==="
-        $summary += "System Health Checks: Completed"
-        $summary += "Repairs Applied: $Global:RepairCount"
-        $summary += "Apps Removed: $Global:RemovedCount"
-        $summary += "Apps Skipped: $Global:SkippedCount"
-        $summary += "Errors: $Global:ErrorCount"
-        $summary += "Updates Applied: $Global:UpdateCount"
-        $summary += "Backup Status: $Global:BackupStatus"
-        $summary += "Audit Findings: $Global:AuditCount"
-        $summary += "==========================="
+        Write-Host "`n=== CKMWinFix Summary ===" -ForegroundColor Cyan
+        Write-Host "Repairs Applied: $Global:RepairCount" -ForegroundColor Green
+        Write-Host "Apps Removed:   $Global:RemovedCount" -ForegroundColor Green
+        Write-Host "Apps Skipped:   $Global:SkippedCount" -ForegroundColor Yellow
+        Write-Host "Errors:         $Global:ErrorCount" -ForegroundColor Red
+        Write-Host "Updates Applied:$Global:UpdateCount" -ForegroundColor Green
+        Write-Host "Backup Status:  $Global:BackupStatus" -ForegroundColor Cyan
+        Write-Host "Audit Findings: $Global:AuditCount" -ForegroundColor Magenta
+        Write-Host "===========================" -ForegroundColor Cyan
 
         # Write summary to log file
-        Add-Content -Path $LogFile -Value "`n$($summary -join "`n")"
-
-        # Also show summary on console
-        Write-Host "`n=== CKMWinFix Summary ===" -ForegroundColor Cyan
-        foreach ($line in $summary) {
-            Write-Host $line -ForegroundColor Green
-        }
+        Add-Content -Path $LogFile -Value "`n=== CKMWinFix Summary ==="
+        Add-Content -Path $LogFile -Value "Repairs Applied: $Global:RepairCount"
+        Add-Content -Path $LogFile -Value "Apps Removed:   $Global:RemovedCount"
+        Add-Content -Path $LogFile -Value "Apps Skipped:   $Global:SkippedCount"
+        Add-Content -Path $LogFile -Value "Errors:         $Global:ErrorCount"
+        Add-Content -Path $LogFile -Value "Updates Applied:$Global:UpdateCount"
+        Add-Content -Path $LogFile -Value "Backup Status:  $Global:BackupStatus"
+        Add-Content -Path $LogFile -Value "Audit Findings: $Global:AuditCount"
+        Add-Content -Path $LogFile -Value "==========================="
 
         Write-Host "`nFinal summary written to: $LogFile" -ForegroundColor Cyan
     } catch {
@@ -107,9 +109,6 @@ Function Write-FinalSummary {
         Write-Host "Error writing final summary: $($_.Exception.Message)" -ForegroundColor Red
     }
 }
-
-
-
 
 # =========================
 # Feature toggles
@@ -222,8 +221,6 @@ Function Fix-SystemPermissions {
     Log "Fix-SystemPermissions Completed."
     Write-Host "=== Fix-SystemPermissions Completed ===" -ForegroundColor Green
 }
-
-
 
 # =========================
 # Optimization tasks (cleanup, startup, visuals, power)
@@ -452,7 +449,6 @@ Function Optimize-Storage {
     Log "Storage Optimization Completed."
     Write-Host "=== Storage Optimization Completed ===" -ForegroundColor Green
 }
-
 
 # =========================
 # Disk Integrity
@@ -702,7 +698,6 @@ Function Debloat-Windows {
     Write-Host "=== Debloat Completed ===" -ForegroundColor Green
 }
 
-
 # =========================
 # Check Windows Updates
 # =========================
@@ -755,7 +750,6 @@ Function Check-WindowsUpdates {
     Write-Host "=== Windows Update Check Completed ===" -ForegroundColor Green
 }
 
-
 # =========================
 # Update System (Drivers + Winget Apps)
 # =========================
@@ -804,8 +798,6 @@ Function Update-System {
     Log "System update completed."
     Write-Host "=== System Update Completed ===" -ForegroundColor Green
 }
-
-
 
 # =========================
 # Network optimization
@@ -860,8 +852,6 @@ Function Optimize-NetworkAuto {
         Write-Host "Network optimization error: $($_.Exception.Message)" -ForegroundColor Red
     }
 }
-
-
 
 # =========================
 # Performance Baseline
@@ -1101,8 +1091,6 @@ Function Audit-InstalledSoftware {
     Log "Interactive software audit completed."
     Write-Host "=== Software Audit Completed ===" -ForegroundColor Green
 }
-
-
 # =========================
 # Task Scheduling
 # =========================
@@ -1134,8 +1122,6 @@ Function Schedule-Task {
     Log "Task Scheduling Completed."
     Write-Host "=== Task Scheduling Completed ===" -ForegroundColor Cyan
 }
-
-
 # =========================
 # Main Execution
 # =========================
