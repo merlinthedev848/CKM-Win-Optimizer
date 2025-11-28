@@ -827,11 +827,15 @@ Function Check-WindowsUpdates {
 }
 
 # =========================
-# Update System (Drivers + Winget Apps with Progress)
+# Update System (Drivers + Winget Apps with Progress + Summary)
 # =========================
 Function Update-System {
     Log "Updating drivers and Winget apps..."
     Write-Host "=== Updating System ===" -ForegroundColor Yellow
+
+    # Track results for summary
+    $updatedApps = @()
+    $failedApps  = @()
 
     try {
         # Update drivers via pnputil
@@ -871,10 +875,12 @@ Function Update-System {
                     try {
                         winget upgrade --id $a --silent --accept-source-agreements --accept-package-agreements | Out-Null
                         $Global:UpdateCount++
+                        $updatedApps += $a
                         Log "Updated application: $a"
                         Write-Host "Updated application: $a" -ForegroundColor Green
                     } catch {
                         $Global:ErrorCount++
+                        $failedApps += $a
                         Log "Winget update error for $a: $($_.Exception.Message)"
                         Write-Host "Winget update error for $a: $($_.Exception.Message)" -ForegroundColor Red
                     }
@@ -899,9 +905,25 @@ Function Update-System {
         Write-Host "System update error: $($_.Exception.Message)" -ForegroundColor Red
     }
 
+    # === Summary Section ===
+    Write-Host "`n=== Winget Update Summary ===" -ForegroundColor Yellow
+    if ($updatedApps.Count -gt 0) {
+        Write-Host "Successfully updated:" -ForegroundColor Green
+        $updatedApps | ForEach-Object { Write-Host " - $_" -ForegroundColor White }
+    } else {
+        Write-Host "No applications were updated." -ForegroundColor Cyan
+    }
+
+    if ($failedApps.Count -gt 0) {
+        Write-Host "Failed to update:" -ForegroundColor Red
+        $failedApps | ForEach-Object { Write-Host " - $_" -ForegroundColor White }
+    }
+
     Log "System update completed."
     Write-Host "=== System Update Completed ===" -ForegroundColor Green
 }
+
+
 
 
 # =========================
