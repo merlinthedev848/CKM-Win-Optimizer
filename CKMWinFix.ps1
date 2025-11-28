@@ -742,7 +742,86 @@ Function Audit-Software {
         ForEach-Object { Write-Host "$($_.DisplayName): Version $($_.DisplayVersion)" }
     } catch { Log "Software audit error: $_" }
     Log "Software Audit Completed."
+}# =========================
+# Audit Installed Software
+# =========================
+Function Audit-InstalledSoftware {
+    param(
+        [switch]$AutoRemoveUnused,   # If set, removes unused apps without prompting
+        [int]$Months = 6             # Default cutoff = 6 months
+    )
+
+    Log "Auditing installed software for unused programs (>$Months months)..."
+
+    $Cutoff = (Get-Date).AddMonths(-$Months)
+
+    try {
+        $Software = Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*,HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\* -ErrorAction SilentlyContinue |
+                    Where-Object { $_.DisplayName } |
+                    Sort-Object DisplayName
+
+        foreach ($App in $Software) {
+            $friendlyName = $App.DisplayName
+            $lastUsed = $App.InstallDate
+
+            # Convert InstallDate if present (format: YYYYMMDD)
+            if ($lastUsed -and $lastUsed -match '^\d{8}$') {
+                $parsedDate = [datetime]::ParseExact($lastUsed, 'yyyyMMdd', $null)
+            } else {
+                $parsedDate = $null
+            }
+
+            if ($parsedDate -and $parsedDate -lt $Cutoff) {
+                $Global:AuditCount++
+                if ($AutoRemoveUnused) {
+                    try {
+                        $UninstallString = $App.UninstallString
+                        if ($UninstallString) {
+                            Start-Process -FilePath "cmd.exe" -ArgumentList "/c $UninstallString" -Wait
+                            $Global:RemovedCount++
+                            Log "Auto-removed unused software: $friendlyName"
+                        } else {
+                            $Global:SkippedCount++
+                            Log "No uninstall string for: $friendlyName"
+                        }
+                    } catch {
+                        $Global:ErrorCount++
+                        Log "Error uninstalling $friendlyName: $_"
+                    }
+                } else {
+                    $response = Read-Host "Remove $friendlyName (installed $parsedDate)? (Y/N)"
+                    if ($response -match '^[Yy]$') {
+                        try {
+                            $UninstallString = $App.UninstallString
+                            if ($UninstallString) {
+                                Start-Process -FilePath "cmd.exe" -ArgumentList "/c $UninstallString" -Wait
+                                $Global:RemovedCount++
+                                Log "Removed unused software: $friendlyName"
+                            } else {
+                                $Global:SkippedCount++
+                                Log "No uninstall string for: $friendlyName"
+                            }
+                        } catch {
+                            $Global:ErrorCount++
+                            Log "Error uninstalling $friendlyName: $_"
+                        }
+                    } else {
+                        $Global:SkippedCount++
+                        Log "User chose to keep: $friendlyName"
+                    }
+                }
+            } else {
+                Log "Kept: $friendlyName (recently used or no usage data)"
+            }
+        }
+    } catch {
+        $Global:ErrorCount++
+        Log "Software audit error: $($_.Exception.Message)"
+    }
+
+    Log "Interactive software audit completed."
 }
+
 # =========================
 # Task Scheduling
 # =========================
