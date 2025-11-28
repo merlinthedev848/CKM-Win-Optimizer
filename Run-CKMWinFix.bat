@@ -12,3 +12,6 @@ if %errorLevel% == 0 (
     echo Requesting administrator privileges...
     powershell.exe Start-Process PowerShell -ArgumentList '-ExecutionPolicy Bypass -File "%~dp0CKMWinFix.ps1"' -Verb RunAs
 )
+@echo off
+powershell.exe -ExecutionPolicy Bypass -NoProfile -File "%~dp0CKMWinFix.ps1"
+pause
