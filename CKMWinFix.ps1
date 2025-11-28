@@ -11,10 +11,44 @@ $LogFolder = "$PSScriptRoot\Logs"
 if (!(Test-Path -Path $LogFolder)) { New-Item -ItemType Directory -Path $LogFolder | Out-Null }
 $LogFile = "$LogFolder\HealthCheckLog_$(Get-Date -Format 'yyyyMMdd_HHmmss').txt"
 
+# Global counters for summary
+$Global:RepairCount   = 0
+$Global:RemovedCount  = 0
+$Global:SkippedCount  = 0
+$Global:ErrorCount    = 0
+$Global:UpdateCount   = 0
+$Global:BackupStatus  = "Not Run"
+$Global:AuditCount    = 0
+
+# Buffer file for enhanced log
+$Global:LogBuffer = "$env:TEMP\CKMWinFixBuffer.log"
+if (Test-Path $Global:LogBuffer) { Remove-Item $Global:LogBuffer -Force }
+
+# Logging function (writes to buffer + console)
 Function Log {
     param ([string]$Message)
     $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    Write-Output "$Timestamp : $Message" | Tee-Object -FilePath $LogFile -Append
+    $Entry = "$Timestamp : $Message"
+    Add-Content -Path $Global:LogBuffer -Value $Entry
+    Write-Host $Entry
+}
+
+# Section runner with skip option
+Function Invoke-Section {
+    param(
+        [string]$SectionName,
+        [scriptblock]$Action
+    )
+
+    $response = Read-Host "Press [Space] + Enter to skip $SectionName, or just Enter to run"
+    if ($response -match '^\s+$') {
+        Log "Skipped section: $SectionName"
+        Write-Host "=== Skipped $SectionName ===" -ForegroundColor Cyan
+    } else {
+        Log "Running section: $SectionName"
+        Write-Host "=== Running $SectionName ===" -ForegroundColor Yellow
+        & $Action
+    }
 }
 
 # =========================
@@ -671,29 +705,35 @@ Function Schedule-Task {
     Log "Task Scheduling Completed."
 }
 # =========================
-# Final Summary
+# Final Summary Writer
 # =========================
 Function Write-FinalSummary {
-    Add-Content -Path $LogFile -Value "`n-------------------------------------------------------------------------------"
-    Add-Content -Path $LogFile -Value "   Final Summary"
-    Add-Content -Path $LogFile -Value "-------------------------------------------------------------------------------"
-    Add-Content -Path $LogFile -Value " System Health         : Completed"
-    Add-Content -Path $LogFile -Value " Permissions           : Completed"
-    Add-Content -Path $LogFile -Value " Optimization          : Completed"
-    Add-Content -Path $LogFile -Value " Storage Optimization  : Completed"
-    Add-Content -Path $LogFile -Value " Disk Integrity        : Completed"
-    Add-Content -Path $LogFile -Value " Security Scans        : Completed"
-    Add-Content -Path $LogFile -Value " Debloat               : Completed"
-    Add-Content -Path $LogFile -Value " Updates               : Completed"
-    Add-Content -Path $LogFile -Value " Network Optimization  : Completed"
-    Add-Content -Path $LogFile -Value " Performance Baseline  : Completed"
-    Add-Content -Path $LogFile -Value " Backup                : Completed"
-    Add-Content -Path $LogFile -Value " Event Logs            : Completed"
-    Add-Content -Path $LogFile -Value " Scheduling            : Completed"
-    Add-Content -Path $LogFile -Value "-------------------------------------------------------------------------------"
-    Add-Content -Path $LogFile -Value " Script Execution Completed Successfully"
-    Add-Content -Path $LogFile -Value "-------------------------------------------------------------------------------"
+    try {
+        $summary = @()
+        $summary += "=== CKMWinFix Summary ==="
+        $summary += "System Health Checks: Completed"
+        $summary += "Repairs Applied: $Global:RepairCount"
+        $summary += "Apps Removed: $Global:RemovedCount"
+        $summary += "Apps Skipped: $Global:SkippedCount"
+        $summary += "Errors: $Global:ErrorCount"
+        $summary += "Updates Applied: $Global:UpdateCount"
+        $summary += "Backup Status: $Global:BackupStatus"
+        $summary += "Audit Findings: $Global:AuditCount"
+        $summary += "==========================="
+
+        # Write summary first
+        $summary | Out-File -FilePath $LogFile -Encoding UTF8
+
+        # Append enhanced log history
+        Add-Content -Path $LogFile -Value "`n=== Enhanced Log ===`n"
+        Get-Content $Global:LogBuffer | Add-Content -Path $LogFile
+
+        Write-Host "Final summary and enhanced log written to: $LogFile" -ForegroundColor Cyan
+    } catch {
+        Write-Host "Error writing final summary: $($_.Exception.Message)" -ForegroundColor Red
+    }
 }
+
 
 # =========================
 # Main Execution
@@ -702,43 +742,51 @@ try {
     Log "Script Execution Started."
     Write-Host "=== CKMWinFix Script Execution Started ===" -ForegroundColor Yellow
 
-    # 1. Baseline and prerequisites
-    Check-SystemHealth
-    Ensure-Defender
+    Invoke-Section "Baseline and prerequisites" {
+        Check-SystemHealth
+        Ensure-Defender
+    }
 
-    # 2. Core repairs and cleanup
-    Troubleshoot-Issues       # SFC, DISM, DNS
-    Fix-SystemPermissions     # Reset ACLs and registry defaults
-    Optimize-System           # Temp/cache cleanup, startup, visuals, power plan
+    Invoke-Section "Core repairs and cleanup" {
+        Troubleshoot-Issues       # SFC, DISM, DNS
+        Fix-SystemPermissions     # Reset ACLs and registry defaults
+        Optimize-System           # Temp/cache cleanup, startup, visuals, power plan
+    }
 
-    # 3. Storage and integrity
-    Optimize-Storage          # Defrag HDDs, TRIM SSDs
-    Check-DiskIntegrity       # Health status of physical disks
+    Invoke-Section "Storage and integrity" {
+        Optimize-Storage          # Defrag HDDs, TRIM SSDs
+        Check-DiskIntegrity       # Health status of physical disks
+    }
 
-    # 4. Security and debloat
-    Run-SecurityScans         # Defender signature update + scan
-    Debloat-Windows           # Curated removals + telemetry off
-    Audit-InstalledSoftware   # NEW: Interactive removal of unused programs (>6 months)
+    Invoke-Section "Security and debloat" {
+        Run-SecurityScans         # Defender signature update + scan
+        Debloat-Windows           # Curated removals + telemetry off
+        Audit-InstalledSoftware   # Interactive removal of unused programs (>6 months)
+    }
 
-    # 5. Updates and performance
-    Check-WindowsUpdates      # OS updates (PSWindowsUpdate/USOClient)
-    Update-System             # Drivers + Winget apps
-    Optimize-NetworkAuto      # Adapter detection + speed visuals
-    Compare-PerformanceBaseline
+    Invoke-Section "Updates and performance" {
+        Check-WindowsUpdates      # OS updates (PSWindowsUpdate/USOClient)
+        Update-System             # Drivers + Winget apps
+        Optimize-NetworkAuto      # Adapter detection + speed visuals
+        Compare-PerformanceBaseline
+    }
 
-    # 6. Backup and audit
-    Backup-UserData
-    Analyze-EventLogs
-    Audit-Software
+    Invoke-Section "Backup and audit" {
+        Backup-UserData
+        Analyze-EventLogs
+        Audit-Software
+    }
 
-    # 7. Scheduling and summary
-    Schedule-Task
-    Write-FinalSummary
+    Invoke-Section "Scheduling and summary" {
+        Schedule-Task
+        Write-FinalSummary
+    }
 
     Log "Script Execution Completed Successfully."
     Write-Host "=== CKMWinFix Script Execution Completed ===" -ForegroundColor Green
     Write-Host "Log file saved to: $LogFile" -ForegroundColor Cyan
 } catch {
+    $Global:ErrorCount++
     Log "Unhandled error: $($_.Exception.Message)"
     Write-Host "An unhandled error occurred: $($_.Exception.Message)" -ForegroundColor Red
 }
