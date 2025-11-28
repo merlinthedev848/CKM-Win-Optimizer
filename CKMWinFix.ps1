@@ -696,22 +696,36 @@ Function Debloat-Windows {
 }
 
 # =========================
-# Check Windows Updates (Safe with Release Health Integration)
+# Check Windows Updates (Safe with Auto-Detect Release Health)
 # =========================
 Function Get-BlacklistedUpdates {
-    # Detect OS version to choose the right Release Health page
-    $osVersion = (Get-ComputerInfo).WindowsVersion
-    switch -Regex ($osVersion) {
-        "11.*25H2" { $url = "https://learn.microsoft.com/en-us/windows/release-health/status-windows-11-25h2" }
-        "11.*24H2" { $url = "https://learn.microsoft.com/en-us/windows/release-health/status-windows-11-24h2" }
-        default    { $url = "https://learn.microsoft.com/en-us/windows/release-health/status-windows-11-25h2" }
+    $osCaption = (Get-CimInstance Win32_OperatingSystem).Caption
+    $build     = (Get-ComputerInfo).WindowsVersion
+    $url       = ""
+
+    if ($osCaption -match "Windows 10") {
+        switch -Regex ($build) {
+            "22H2" { $url = "https://learn.microsoft.com/en-us/windows/release-health/status-windows-10-22h2" }
+            "21H2" { $url = "https://learn.microsoft.com/en-us/windows/release-health/status-windows-10-21h2" }
+            default { $url = "https://learn.microsoft.com/en-us/windows/release-health/status-windows-10-22h2" }
+        }
+    } elseif ($osCaption -match "Windows 11") {
+        switch -Regex ($build) {
+            "25H2" { $url = "https://learn.microsoft.com/en-us/windows/release-health/status-windows-11-25h2" }
+            "24H2" { $url = "https://learn.microsoft.com/en-us/windows/release-health/status-windows-11-24h2" }
+            default { $url = "https://learn.microsoft.com/en-us/windows/release-health/status-windows-11-25h2" }
+        }
+    } else {
+        $url = "https://learn.microsoft.com/en-us/windows/release-health/"
     }
 
     try {
-        $html = Invoke-WebRequest -Uri $url -UseBasicParsing
+        Write-Progress -Activity "Fetching Release Health" -Status "Querying Microsoft..." -PercentComplete 50
+        $html    = Invoke-WebRequest -Uri $url -UseBasicParsing
         $matches = [regex]::Matches($html.Content, "KB\d{7}")
-        $kbList = $matches.Value | Sort-Object -Unique
+        $kbList  = $matches.Value | Sort-Object -Unique
         Log "Fetched blacklist from Release Health ($url): $($kbList -join ', ')"
+        Write-Progress -Activity "Fetching Release Health" -Status "Completed" -PercentComplete 100
         return $kbList
     } catch {
         Log "Failed to fetch Release Health dashboard: $($_.Exception.Message)"
@@ -732,21 +746,29 @@ Function Check-WindowsUpdates {
             if ($updates -and $updates.Count -gt 0) {
                 Write-Host "Pending updates found:" -ForegroundColor Cyan
                 foreach ($u in $updates) {
-                    Write-Host " - $($u.Title) [$($u.KB)]" -ForegroundColor White
-                    Log "Pending update: $($u.Title) [$($u.KB)]"
+                    $kbId = [regex]::Match($u.Title, "KB\d{7}").Value
+                    Write-Host " - $($u.Title) [$kbId]" -ForegroundColor White
+                    Log "Pending update: $($u.Title) [$kbId]"
                 }
 
                 # Fetch dynamic blacklist from Release Health
                 $blacklist = Get-BlacklistedUpdates
 
                 # Filter out blacklisted updates
-                $safeUpdates = $updates | Where-Object { $blacklist -notcontains $_.KB }
+                $safeUpdates = $updates | Where-Object {
+                    $kbId = [regex]::Match($_.Title, "KB\d{7}").Value
+                    $blacklist -notcontains $kbId
+                }
 
                 if ($safeUpdates.Count -lt $updates.Count) {
-                    $bad = $updates | Where-Object { $blacklist -contains $_.KB }
+                    $bad = $updates | Where-Object {
+                        $kbId = [regex]::Match($_.Title, "KB\d{7}").Value
+                        $blacklist -contains $kbId
+                    }
                     foreach ($b in $bad) {
-                        Log "Blacklisted update detected: $($b.Title) [$($b.KB)]"
-                        Write-Host "⚠ Skipped blacklisted update: $($b.Title) [$($b.KB)]" -ForegroundColor Yellow
+                        $kbId = [regex]::Match($b.Title, "KB\d{7}").Value
+                        Log "Blacklisted update detected: $($b.Title) [$kbId]"
+                        Write-Host "⚠ Skipped blacklisted update: $($b.Title) [$kbId]" -ForegroundColor Yellow
                     }
                 }
 
@@ -804,10 +826,8 @@ Function Check-WindowsUpdates {
     Write-Host "=== Windows Update Check Completed ===" -ForegroundColor Green
 }
 
-
-
 # =========================
-# Update System (Drivers + Winget Apps)
+# Update System (Drivers + Winget Apps with Progress)
 # =========================
 Function Update-System {
     Log "Updating drivers and Winget apps..."
@@ -830,15 +850,43 @@ Function Update-System {
         # Update apps via Winget
         Write-Host "Checking for Winget application updates..." -ForegroundColor Yellow
         try {
-            $proc = Start-Process winget -ArgumentList 'upgrade --accept-source-agreements --accept-package-agreements --silent' -NoNewWindow -PassThru -Wait
-            if ($proc.ExitCode -eq 0) {
-                $Global:UpdateCount++
-                Log "Winget upgrade executed successfully."
-                Write-Host "Winget upgrade executed successfully." -ForegroundColor Green
+            # Get list of upgradable apps
+            $apps = winget upgrade | Select-String "^\S" | ForEach-Object {
+                ($_ -split '\s{2,}')[0]
+            }
+
+            if ($apps -and $apps.Count -gt 0) {
+                Write-Host "Pending app updates found:" -ForegroundColor Cyan
+                foreach ($a in $apps) {
+                    Write-Host " - $a" -ForegroundColor White
+                    Log "Pending app update: $a"
+                }
+
+                $i = 0
+                foreach ($a in $apps) {
+                    $i++
+                    $percent = [math]::Round(($i / $apps.Count) * 100)
+                    Write-Progress -Activity "Updating Applications" -Status "Updating $a" -PercentComplete $percent
+
+                    try {
+                        winget upgrade --id $a --silent --accept-source-agreements --accept-package-agreements | Out-Null
+                        $Global:UpdateCount++
+                        Log "Updated application: $a"
+                        Write-Host "Updated application: $a" -ForegroundColor Green
+                    } catch {
+                        $Global:ErrorCount++
+                        Log "Winget update error for $a: $($_.Exception.Message)"
+                        Write-Host "Winget update error for $a: $($_.Exception.Message)" -ForegroundColor Red
+                    }
+                }
+
+                Write-Progress -Activity "Updating Applications" -Status "Completed" -PercentComplete 100
+                Log "Winget application updates completed."
+                Write-Host "=== Winget Application Updates Completed ===" -ForegroundColor Green
             } else {
-                $Global:ErrorCount++
-                Log "Winget upgrade failed with exit code $($proc.ExitCode)."
-                Write-Host "Winget upgrade failed with exit code $($proc.ExitCode)." -ForegroundColor Red
+                $Global:SkippedCount++
+                Log "No Winget application updates available."
+                Write-Host "No Winget application updates available." -ForegroundColor Cyan
             }
         } catch {
             $Global:ErrorCount++
@@ -854,6 +902,7 @@ Function Update-System {
     Log "System update completed."
     Write-Host "=== System Update Completed ===" -ForegroundColor Green
 }
+
 
 # =========================
 # Network optimization
