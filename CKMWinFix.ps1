@@ -78,30 +78,30 @@ Function Check-SystemHealth {
     Log "System Health Check Completed."
 }
 # =========================
-# Fix Permissions
+# Fix Permissions (Scoped)
 # =========================
 Function Fix-SystemPermissions {
     if (-not $Global:FixPermissions) { Log "Permission repair disabled."; return }
 
-    Log "Resetting system permissions..."
-    Write-Host "=== Resetting File and Registry Permissions ===" -ForegroundColor Yellow
+    Log "Resetting user-level permissions and registry defaults..."
+    Write-Host "=== Resetting File and Registry Permissions (Scoped) ===" -ForegroundColor Yellow
 
     try {
-        # Reset core folder ACLs
-        icacls "C:\Windows" /reset /t /c /q | Out-Host
-        icacls "C:\Program Files" /reset /t /c /q | Out-Host
-        icacls "C:\Program Files (x86)" /reset /t /c /q | Out-Host
+        # Reset ACLs only on user profile and ProgramData
+        icacls "$env:USERPROFILE" /reset /t /c /q 2>$null
+        icacls "C:\ProgramData" /reset /t /c /q 2>$null
 
-        # Reset registry & security policy
-        secedit /configure /cfg %windir%\inf\defltbase.inf /db defltbase.sdb /verbose | Out-Host
+        # Refresh registry & security policy defaults
+        secedit /configure /cfg %windir%\inf\defltbase.inf /db defltbase.sdb /verbose 2>$null
 
-        Log "System permissions reset to defaults."
+        Log "User-level permissions and registry defaults reset."
     } catch {
-        Log "Permission repair error: $_"
+        Log "Permission repair error: $($_.Exception.Message)"
     }
 
     Log "Permission repair completed."
 }
+
 # =========================
 # Optimization tasks (cleanup, startup, visuals, power)
 # =========================
