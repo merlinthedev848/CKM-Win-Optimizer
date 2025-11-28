@@ -42,6 +42,7 @@ Function Invoke-Section {
         [string]$SectionName,
         [scriptblock]$Action
     )
+
     $response = Read-Host "Press [Space] + Enter to skip $SectionName, or just Enter to run"
     if ($response -match '^\s+$') {
         Log "Skipped section: $SectionName"
@@ -52,17 +53,16 @@ Function Invoke-Section {
         Write-Host "=== Running $SectionName ===" -ForegroundColor Yellow
         try {
             & $Action
-            Log "Section '$SectionName' completed."
+            Log "Section '${SectionName}' completed."
         } catch {
             $Global:ErrorCount++
             Log "Error in section ${SectionName}: $($_.Exception.Message)"
             Write-Host "Error in section ${SectionName}: $($_.Exception.Message)" -ForegroundColor Red
-}
-
-
         }
     }
 }
+
+
 
 # Basic system health check
 Function Check-SystemHealth {
@@ -1064,8 +1064,10 @@ Function Audit-InstalledSoftware {
                             if ($UninstallString) {
                                 Start-Process -FilePath "cmd.exe" -ArgumentList "/c $UninstallString" -Wait
                                 $Global:RemovedCount++
-                                Log "Removed unused software: $friendlyName"
-                                Write-Host "Removed unused software: $friendlyName" -ForegroundColor Green
+								Log "Error uninstalling ${friendlyName}: $($_.Exception.Message)"
+								Write-Host "Error uninstalling ${friendlyName}: $($_.Exception.Message)" -ForegroundColor Red
+
+
                             } else {
                                 $Global:SkippedCount++
                                 Log "No uninstall string for: $friendlyName"
@@ -1073,8 +1075,8 @@ Function Audit-InstalledSoftware {
                             }
                         } catch {
                             $Global:ErrorCount++
-                            Log "Error uninstalling $friendlyName: $($_.Exception.Message)"
-                            Write-Host "Error uninstalling $friendlyName: $($_.Exception.Message)" -ForegroundColor Red
+                            Log "Error uninstalling ${friendlyName}: $($_.Exception.Message)"
+                            Write-Host "Error uninstalling ${friendlyName}: $($_.Exception.Message)" -ForegroundColor Red
                         }
                     } else {
                         $Global:SkippedCount++
