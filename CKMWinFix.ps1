@@ -720,8 +720,29 @@ Function Debloat-Windows {
 }
 
 # =========================
-# Check Windows Updates
+# Check Windows Updates (Safe with Release Health Integration)
 # =========================
+Function Get-BlacklistedUpdates {
+    # Detect OS version to choose the right Release Health page
+    $osVersion = (Get-ComputerInfo).WindowsVersion
+    switch -Regex ($osVersion) {
+        "11.*25H2" { $url = "https://learn.microsoft.com/en-us/windows/release-health/status-windows-11-25h2" }
+        "11.*24H2" { $url = "https://learn.microsoft.com/en-us/windows/release-health/status-windows-11-24h2" }
+        default    { $url = "https://learn.microsoft.com/en-us/windows/release-health/status-windows-11-25h2" }
+    }
+
+    try {
+        $html = Invoke-WebRequest -Uri $url -UseBasicParsing
+        $matches = [regex]::Matches($html.Content, "KB\d{7}")
+        $kbList = $matches.Value | Sort-Object -Unique
+        Log "Fetched blacklist from Release Health ($url): $($kbList -join ', ')"
+        return $kbList
+    } catch {
+        Log "Failed to fetch Release Health dashboard: $($_.Exception.Message)"
+        return @()
+    }
+}
+
 Function Check-WindowsUpdates {
     Log "Checking for Windows Updates..."
     Write-Host "=== Checking Windows Updates ===" -ForegroundColor Yellow
@@ -730,17 +751,53 @@ Function Check-WindowsUpdates {
         Import-Module PSWindowsUpdate -ErrorAction SilentlyContinue
 
         if (Get-Command Get-WindowsUpdate -ErrorAction SilentlyContinue) {
-            $updates = Get-WindowsUpdate -AcceptAll -IgnoreReboot
+            $updates = Get-WindowsUpdate -IgnoreUserInput -ErrorAction SilentlyContinue
+
             if ($updates -and $updates.Count -gt 0) {
-                try {
-                    Install-WindowsUpdate -AcceptAll -IgnoreReboot -AutoReboot:$false
-                    $Global:UpdateCount += $updates.Count
-                    Log "Installed $($updates.Count) Windows updates."
-                    Write-Host "Installed $($updates.Count) Windows updates." -ForegroundColor Green
-                } catch {
-                    $Global:ErrorCount++
-                    Log "Windows Update install error: $($_.Exception.Message)"
-                    Write-Host "Windows Update install error: $($_.Exception.Message)" -ForegroundColor Red
+                Write-Host "Pending updates found:" -ForegroundColor Cyan
+                foreach ($u in $updates) {
+                    Write-Host " - $($u.Title) [$($u.KB)]" -ForegroundColor White
+                    Log "Pending update: $($u.Title) [$($u.KB)]"
+                }
+
+                # Fetch dynamic blacklist from Release Health
+                $blacklist = Get-BlacklistedUpdates
+
+                # Filter out blacklisted updates
+                $safeUpdates = $updates | Where-Object { $blacklist -notcontains $_.KB }
+
+                if ($safeUpdates.Count -lt $updates.Count) {
+                    $bad = $updates | Where-Object { $blacklist -contains $_.KB }
+                    foreach ($b in $bad) {
+                        Log "Blacklisted update detected: $($b.Title) [$($b.KB)]"
+                        Write-Host "⚠ Skipped blacklisted update: $($b.Title) [$($b.KB)]" -ForegroundColor Yellow
+                    }
+                }
+
+                if ($safeUpdates.Count -eq 0) {
+                    $Global:SkippedCount++
+                    Log "All pending updates are blacklisted/skipped."
+                    Write-Host "All pending updates are blacklisted/skipped." -ForegroundColor Yellow
+                } else {
+                    $response = Read-Host "Proceed with installing $($safeUpdates.Count) safe updates? (Y/N)"
+                    if ($response -match '^[Yy]$') {
+                        Write-Progress -Activity "Installing Windows Updates" -Status "Starting..." -PercentComplete 10
+                        try {
+                            Install-WindowsUpdate -AcceptAll -IgnoreReboot -AutoReboot:$false
+                            $Global:UpdateCount += $safeUpdates.Count
+                            Log "Installed $($safeUpdates.Count) Windows updates."
+                            Write-Host "Installed $($safeUpdates.Count) Windows updates." -ForegroundColor Green
+                        } catch {
+                            $Global:ErrorCount++
+                            Log "Windows Update install error: $($_.Exception.Message)"
+                            Write-Host "Windows Update install error: $($_.Exception.Message)" -ForegroundColor Red
+                        }
+                        Write-Progress -Activity "Installing Windows Updates" -Status "Completed" -PercentComplete 100
+                    } else {
+                        $Global:SkippedCount++
+                        Log "User skipped Windows Update installation."
+                        Write-Host "User skipped Windows Update installation." -ForegroundColor Yellow
+                    }
                 }
             } else {
                 $Global:SkippedCount++
@@ -770,6 +827,8 @@ Function Check-WindowsUpdates {
     Log "Windows Update check completed."
     Write-Host "=== Windows Update Check Completed ===" -ForegroundColor Green
 }
+
+
 
 # =========================
 # Update System (Drivers + Winget Apps)
