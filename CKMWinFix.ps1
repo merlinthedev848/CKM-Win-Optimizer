@@ -401,26 +401,37 @@ Function Troubleshoot-Issues {
 }
 
 # =========================
-# Storage and Integrity (with Progress)
+# Storage and Integrity (Hybrid with Progress)
 # =========================
 Function Optimize-Storage {
     Log "Starting Storage Optimization..."
     Write-Host "=== Detecting Storage Devices ===" -ForegroundColor Yellow
     try {
-        $disks = Get-PhysicalDisk -ErrorAction SilentlyContinue
+        # Prefer modern cmdlet, fallback to WMI
+        if (Get-Command Get-PhysicalDisk -ErrorAction SilentlyContinue) {
+            $disks = Get-PhysicalDisk
+        } else {
+            $disks = Get-WmiObject Win32_DiskDrive
+        }
+
         if ($disks) {
             $i = 0
             foreach ($d in $disks) {
                 $i++
                 $percent = [math]::Round(($i / $disks.Count) * 100)
                 Write-Progress -Activity "Storage Optimization" -Status "Checking $($d.FriendlyName)" -PercentComplete $percent
-                Write-Host "Disk: $($d.FriendlyName) | Size: $([math]::Round($d.Size/1GB,2)) GB | Type: $($d.MediaType)" -ForegroundColor Cyan
-                Log "Detected disk: $($d.FriendlyName), $([math]::Round($d.Size/1GB,2)) GB, $($d.MediaType)"
+
+                $name  = if ($d.PSObject.Properties.Name -contains 'FriendlyName') { $d.FriendlyName } else { $d.Model }
+                $size  = if ($d.PSObject.Properties.Name -contains 'Size') { [math]::Round($d.Size/1GB,2) } else { "Unknown" }
+                $type  = if ($d.PSObject.Properties.Name -contains 'MediaType') { $d.MediaType } else { "Unknown" }
+
+                Write-Host "Disk: $name | Size: $size GB | Type: $type" -ForegroundColor Cyan
+                Log "Detected disk: $name, $size GB, $type"
             }
         } else {
             $Global:SkippedCount++
-            Log "No physical disks detected via Get-PhysicalDisk."
-            Write-Host "No physical disks detected." -ForegroundColor Yellow
+            Log "No disks detected."
+            Write-Host "No disks detected." -ForegroundColor Yellow
         }
     } catch {
         $Global:ErrorCount++
@@ -436,21 +447,28 @@ Function Check-DiskIntegrity {
     Log "Starting Disk Integrity Check..."
     Write-Host "=== Disk Integrity ===" -ForegroundColor Yellow
     try {
-        $volumes = Get-Volume -ErrorAction SilentlyContinue
+        # Prefer modern cmdlet, fallback to WMI
+        if (Get-Command Get-Volume -ErrorAction SilentlyContinue) {
+            $volumes = Get-Volume
+        } else {
+            $volumes = Get-WmiObject Win32_Volume
+        }
+
         if ($volumes) {
             $i = 0
             foreach ($v in $volumes) {
                 $i++
                 $percent = [math]::Round(($i / $volumes.Count) * 100)
-                Write-Progress -Activity "Disk Integrity Check" -Status "Scanning $($v.DriveLetter): $($v.FileSystemLabel)" -PercentComplete $percent
-                Write-Host "Checking $($v.DriveLetter): $($v.FileSystemLabel)" -ForegroundColor Cyan
-                # Run chkdsk in read-only scan mode
+                $label = if ($v.PSObject.Properties.Name -contains 'FileSystemLabel') { $v.FileSystemLabel } else { $v.Label }
+                Write-Progress -Activity "Disk Integrity Check" -Status "Scanning $($v.DriveLetter): $label" -PercentComplete $percent
+                Write-Host "Checking $($v.DriveLetter): $label" -ForegroundColor Cyan
+
                 Start-Process -FilePath "chkdsk.exe" -ArgumentList "$($v.DriveLetter): /scan" -Wait -NoNewWindow
                 Log "Integrity check completed for $($v.DriveLetter):"
             }
         } else {
             $Global:SkippedCount++
-            Log "No volumes detected via Get-Volume."
+            Log "No volumes detected."
             Write-Host "No volumes detected." -ForegroundColor Yellow
         }
     } catch {
@@ -462,6 +480,8 @@ Function Check-DiskIntegrity {
     Log "Disk Integrity Check Completed."
     Write-Host "=== Disk Integrity Check Completed ===" -ForegroundColor Green
 }
+
+
 
 
 
