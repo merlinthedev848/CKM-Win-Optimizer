@@ -187,7 +187,7 @@ Function Check-SystemHealth {
 }
 
 # =========================
-# Fix Permissions (Scoped)
+# Fix Permissions (Scoped with Progress)
 # =========================
 Function Fix-SystemPermissions {
     if (-not $Global:FixPermissions) {
@@ -199,31 +199,46 @@ Function Fix-SystemPermissions {
     Write-Host "=== Resetting File and Registry Permissions (Scoped) ===" -ForegroundColor Yellow
 
     try {
-        # Reset ACLs only on user profile and ProgramData
+        # Step 1: Reset ACLs on user profile
+        Write-Progress -Activity "Fix-SystemPermissions" -Status "Resetting ACLs on user profile..." -PercentComplete 25
+        Write-Host "Resetting ACLs on $env:USERPROFILE..." -ForegroundColor Cyan
         icacls "$env:USERPROFILE" /reset /t /c /q 2>$null
+
+        # Step 2: Reset ACLs on ProgramData
+        Write-Progress -Activity "Fix-SystemPermissions" -Status "Resetting ACLs on ProgramData..." -PercentComplete 50
+        Write-Host "Resetting ACLs on C:\ProgramData..." -ForegroundColor Cyan
         icacls "C:\ProgramData" /reset /t /c /q 2>$null
+
         $Global:RepairCount++
         Log "ACLs reset for user profile and ProgramData."
 
-        # Refresh registry & security policy defaults (only if file exists)
+        # Step 3: Refresh registry & security policy defaults
         $DefltBase = Join-Path $env:windir "inf\defltbase.inf"
         if (Test-Path $DefltBase) {
+            Write-Progress -Activity "Fix-SystemPermissions" -Status "Refreshing registry & security policy defaults..." -PercentComplete 75
+            Write-Host "Refreshing registry & security policy defaults..." -ForegroundColor Cyan
             secedit /configure /cfg $DefltBase /db defltbase.sdb /verbose 2>$null
+
             $Global:RepairCount++
             Log "Registry and security policy defaults refreshed."
         } else {
             $Global:SkippedCount++
             Log "Skipped registry defaults reset (defltbase.inf not found)."
+            Write-Host "Skipped registry defaults reset (defltbase.inf not found)." -ForegroundColor Yellow
         }
+
+        # Step 4: Completed
+        Write-Progress -Activity "Fix-SystemPermissions" -Status "Completed" -PercentComplete 100
+        Log "Fix-SystemPermissions Completed."
+        Write-Host "=== Fix-SystemPermissions Completed ===" -ForegroundColor Green
     } catch {
         $Global:ErrorCount++
         Log "Permission repair error: $($_.Exception.Message)"
         Write-Host "Permission repair error: $($_.Exception.Message)" -ForegroundColor Red
     }
-
-    Log "Fix-SystemPermissions Completed."
-    Write-Host "=== Fix-SystemPermissions Completed ===" -ForegroundColor Green
 }
+
+
 
 # =========================
 # Optimization tasks (cleanup, startup, visuals, power)
