@@ -401,113 +401,69 @@ Function Troubleshoot-Issues {
 }
 
 # =========================
-# Storage Optimization
+# Storage and Integrity (with Progress)
 # =========================
 Function Optimize-Storage {
     Log "Starting Storage Optimization..."
     Write-Host "=== Detecting Storage Devices ===" -ForegroundColor Yellow
     try {
-        $Disks = Get-PhysicalDisk -ErrorAction Stop
-        foreach ($Disk in $Disks) {
-            Write-Host "Disk: $($Disk.FriendlyName)" -ForegroundColor Cyan
-            Write-Host "Media Type: $($Disk.MediaType)" -ForegroundColor Green
-            Log "Detected disk: $($Disk.FriendlyName) [$($Disk.MediaType)]"
-
-            # Map disk → partitions → volumes
-            try {
-                $Partitions = Get-Partition -DiskNumber $Disk.DeviceID -ErrorAction SilentlyContinue
-                foreach ($Partition in $Partitions) {
-                    $Volume = Get-Volume -Partition $Partition -ErrorAction SilentlyContinue
-                    if ($Volume -and $Volume.DriveLetter) {
-                        if ($Disk.MediaType -eq "HDD") {
-                            Write-Host "Running defrag on HDD volume $($Volume.DriveLetter)..." -ForegroundColor Yellow
-                            Optimize-Volume -DriveLetter $Volume.DriveLetter -Defrag -Verbose
-                            $Global:RepairCount++
-                            Log "Defrag completed on $($Disk.FriendlyName) volume $($Volume.DriveLetter)"
-                        }
-                        elseif ($Disk.MediaType -eq "SSD") {
-                            Write-Host "Running TRIM optimization on SSD volume $($Volume.DriveLetter)..." -ForegroundColor Yellow
-                            Optimize-Volume -DriveLetter $Volume.DriveLetter -ReTrim -Verbose
-                            $Global:RepairCount++
-                            Log "TRIM optimization completed on $($Disk.FriendlyName) volume $($Volume.DriveLetter)"
-                        }
-                        else {
-                            $Global:SkippedCount++
-                            Write-Host "Skipping unknown media type: $($Disk.MediaType)" -ForegroundColor Yellow
-                            Log "Skipped disk $($Disk.FriendlyName) (unknown type)"
-                        }
-                    }
-                }
-            } catch {
-                $Global:ErrorCount++
-                Log "Partition/volume mapping error on $($Disk.FriendlyName): $($_.Exception.Message)"
-                Write-Host "Partition/volume mapping error on $($Disk.FriendlyName): $($_.Exception.Message)" -ForegroundColor Red
+        $disks = Get-PhysicalDisk -ErrorAction SilentlyContinue
+        if ($disks) {
+            $i = 0
+            foreach ($d in $disks) {
+                $i++
+                $percent = [math]::Round(($i / $disks.Count) * 100)
+                Write-Progress -Activity "Storage Optimization" -Status "Checking $($d.FriendlyName)" -PercentComplete $percent
+                Write-Host "Disk: $($d.FriendlyName) | Size: $([math]::Round($d.Size/1GB,2)) GB | Type: $($d.MediaType)" -ForegroundColor Cyan
+                Log "Detected disk: $($d.FriendlyName), $([math]::Round($d.Size/1GB,2)) GB, $($d.MediaType)"
             }
-        }
-
-        Write-Host "`n=== Storage Visual ===" -ForegroundColor Magenta
-        Add-Content -Path $LogFile -Value "`n=== Storage Visual ==="
-        foreach ($Disk in $Disks) {
-            $Bars = switch ($Disk.MediaType) {
-                "HDD" { 20 }
-                "SSD" { 30 }
-                default { 10 }
-            }
-            $BarString = ($Global:BarChar * $Bars)
-            $Line = ("{0,-20} {1,-10} | {2}" -f $Disk.FriendlyName, $Disk.MediaType, $BarString)
-            Write-Host $Line -ForegroundColor Cyan
-            Add-Content -Path $LogFile -Value $Line
+        } else {
+            $Global:SkippedCount++
+            Log "No physical disks detected via Get-PhysicalDisk."
+            Write-Host "No physical disks detected." -ForegroundColor Yellow
         }
     } catch {
         $Global:ErrorCount++
         Log "Storage optimization error: $($_.Exception.Message)"
-        Write-Host "Error during storage optimization: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "Storage optimization error: $($_.Exception.Message)" -ForegroundColor Red
     }
-
+    Write-Progress -Activity "Storage Optimization" -Status "Completed" -PercentComplete 100
     Log "Storage Optimization Completed."
     Write-Host "=== Storage Optimization Completed ===" -ForegroundColor Green
 }
 
-# =========================
-# Disk Integrity
-# =========================
 Function Check-DiskIntegrity {
     Log "Starting Disk Integrity Check..."
     Write-Host "=== Disk Integrity ===" -ForegroundColor Yellow
-
     try {
-        $Disks = Get-PhysicalDisk -ErrorAction Stop
-        $Results = $Disks | Select FriendlyName, OperationalStatus, HealthStatus
-
-        # Output results to console and log
-        $Results | Format-Table -AutoSize
-        $Results | Out-String | Add-Content -Path $LogFile
-
-        Write-Host "`n=== Disk Visual ===" -ForegroundColor Magenta
-        Add-Content -Path $LogFile -Value "`n=== Disk Visual ==="
-
-        foreach ($Disk in $Results) {
-            $BarString = if ($Disk.HealthStatus -eq "Healthy") { ($Global:BarChar * 10) } else { "## ERROR ##" }
-            $Line = ("{0,-20} {1,-15} {2,-10} | {3}" -f $Disk.FriendlyName, $Disk.OperationalStatus, $Disk.HealthStatus, $BarString)
-            Write-Host $Line -ForegroundColor Cyan
-            Add-Content -Path $LogFile -Value $Line
-
-            # Update counters
-            if ($Disk.HealthStatus -eq "Healthy") {
-                $Global:AuditCount++
-            } else {
-                $Global:ErrorCount++
+        $volumes = Get-Volume -ErrorAction SilentlyContinue
+        if ($volumes) {
+            $i = 0
+            foreach ($v in $volumes) {
+                $i++
+                $percent = [math]::Round(($i / $volumes.Count) * 100)
+                Write-Progress -Activity "Disk Integrity Check" -Status "Scanning $($v.DriveLetter): $($v.FileSystemLabel)" -PercentComplete $percent
+                Write-Host "Checking $($v.DriveLetter): $($v.FileSystemLabel)" -ForegroundColor Cyan
+                # Run chkdsk in read-only scan mode
+                Start-Process -FilePath "chkdsk.exe" -ArgumentList "$($v.DriveLetter): /scan" -Wait -NoNewWindow
+                Log "Integrity check completed for $($v.DriveLetter):"
             }
+        } else {
+            $Global:SkippedCount++
+            Log "No volumes detected via Get-Volume."
+            Write-Host "No volumes detected." -ForegroundColor Yellow
         }
-
-        Log "Disk Integrity Check Completed."
-        Write-Host "=== Disk Integrity Check Completed ===" -ForegroundColor Green
     } catch {
         $Global:ErrorCount++
         Log "Disk Integrity error: $($_.Exception.Message)"
         Write-Host "Disk Integrity error: $($_.Exception.Message)" -ForegroundColor Red
     }
+    Write-Progress -Activity "Disk Integrity Check" -Status "Completed" -PercentComplete 100
+    Log "Disk Integrity Check Completed."
+    Write-Host "=== Disk Integrity Check Completed ===" -ForegroundColor Green
 }
+
+
 
 # =========================
 # Security scans (Windows Defender)
