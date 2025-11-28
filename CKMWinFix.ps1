@@ -327,7 +327,12 @@ Function Debloat-Windows {
             "Microsoft.Windows.Photos",
             "Microsoft.AAD.BrokerPlugin",
             "Microsoft.Windows.Search",
-            "Microsoft.Copilot"
+            "Microsoft.Copilot",
+            "MicrosoftTeams",
+            "MicrosoftWindows.Client.WebExperience",
+            "Microsoft.XboxApp",
+            "Microsoft.XboxGamingOverlay",
+            "Microsoft.XboxIdentityProvider"
         )
 
         # Curated safe-to-remove apps
@@ -336,28 +341,31 @@ Function Debloat-Windows {
             "Microsoft.MSPaint",
             "Microsoft.Microsoft3DViewer",
             "Microsoft.SkypeApp",
-            "Microsoft.XboxApp",
-            "Microsoft.XboxGamingOverlay",
-            "Microsoft.XboxIdentityProvider",
             "Microsoft.ZuneMusic",
             "Microsoft.ZuneVideo",
             "Microsoft.GetHelp",
             "Microsoft.Getstarted",
-            "Microsoft.MicrosoftOfficeHub",
             "Microsoft.MicrosoftSolitaireCollection",
             "Microsoft.People",
             "Microsoft.OneConnect",
             "Microsoft.MixedReality.Portal",
-            "Microsoft.YourPhone"
+            "Microsoft.YourPhone",
+            "Microsoft.MicrosoftOfficeHub"
         )
 
         foreach ($Target in $DebloatTargets) {
             $App = Get-AppxPackage -AllUsers | Where-Object { $_.Name -eq $Target }
             if ($App) {
-                try {
-                    Remove-AppxPackage -Package $App.PackageFullName -AllUsers -ErrorAction SilentlyContinue
-                    if ($?) { Log "Removed: $Target" } else { Log "Skipped: $Target" }
-                } catch { Log "Skipped (protected or system): $Target" }
+                $friendlyName = if ($App.DisplayName) { $App.DisplayName } else { $App.Name }
+                $response = Read-Host "Do you want to remove $friendlyName? (Y/N)"
+                if ($response -match '^[Yy]$') {
+                    try {
+                        Remove-AppxPackage -Package $App.PackageFullName -AllUsers -ErrorAction SilentlyContinue
+                        if ($?) { Log "Removed: $friendlyName" } else { Log "Skipped: $friendlyName" }
+                    } catch { Log "Skipped (error): $friendlyName" }
+                } else {
+                    Log "User chose to keep: $friendlyName"
+                }
             } else {
                 Log "Not present: $Target"
             }
@@ -367,24 +375,7 @@ Function Debloat-Windows {
             Log "Skipped (protected): $App"
         }
 
-        if ($ProductName -like "*Windows 10*") {
-            Log "Disabling Cortana..."
-            New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" -Force | Out-Null
-            Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" -Name "AllowCortana" -Value 0 -Type DWord -ErrorAction SilentlyContinue
-        }
-        elseif ($ProductName -like "*Windows 11*") {
-            Log "Targeted removals for Windows 11..."
-            Get-AppxPackage -AllUsers | Where-Object { $_.Name -like "*WebExperience*" -or $_.Name -like "*MicrosoftTeams*" -or $_.Name -like "*YourPhone*" } | ForEach-Object {
-                try {
-                    Remove-AppxPackage -Package $_.PackageFullName -AllUsers -ErrorAction SilentlyContinue
-                    if ($?) { Log "Removed: $($_.Name)" } else { Log "Skipped: $($_.Name)" }
-                } catch { Log "Skipped (system): $($_.Name)" }
-            }
-            Log "Disabling Transparency..."
-            New-Item -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Force | Out-Null
-            Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name "EnableTransparency" -Value 0 -Type DWord -ErrorAction SilentlyContinue
-        }
-
+        # Telemetry disable remains automatic
         Log "Disabling telemetry via registry..."
         New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Force | Out-Null
         Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "AllowTelemetry" -Value 0 -Type DWord -ErrorAction SilentlyContinue
@@ -404,6 +395,59 @@ Function Debloat-Windows {
     Write-Progress -Activity "Debloating Windows" -Completed
     Log "Debloat Completed."
 }
+
+# =========================
+# Debloat Unused Apps
+# =========================
+Function Audit-InstalledSoftware {
+    Log "Auditing installed software for unused programs..."
+
+    $Cutoff = (Get-Date).AddMonths(-6)
+
+    try {
+        $Software = Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*,HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\* -ErrorAction SilentlyContinue |
+                    Where-Object { $_.DisplayName } |
+                    Sort-Object DisplayName
+
+        foreach ($App in $Software) {
+            $friendlyName = $App.DisplayName
+            $lastUsed = $App.InstallDate
+
+            # Convert InstallDate if present (format: YYYYMMDD)
+            if ($lastUsed -and $lastUsed -match '^\d{8}$') {
+                $parsedDate = [datetime]::ParseExact($lastUsed, 'yyyyMMdd', $null)
+            } else {
+                $parsedDate = $null
+            }
+
+            if ($parsedDate -and $parsedDate -lt $Cutoff) {
+                $response = Read-Host "Remove $friendlyName (last used/installed $parsedDate)? (Y/N)"
+                if ($response -match '^[Yy]$') {
+                    try {
+                        $UninstallString = $App.UninstallString
+                        if ($UninstallString) {
+                            Start-Process -FilePath "cmd.exe" -ArgumentList "/c $UninstallString" -Wait
+                            Log "Removed unused software: $friendlyName"
+                        } else {
+                            Log "No uninstall string for: $friendlyName"
+                        }
+                    } catch {
+                        Log "Error uninstalling $friendlyName: $_"
+                    }
+                } else {
+                    Log "User chose to keep: $friendlyName"
+                }
+            } else {
+                Log "Kept: $friendlyName (recently used or no usage data)"
+            }
+        }
+    } catch {
+        Log "Software audit error: $($_.Exception.Message)"
+    }
+
+    Log "Interactive software audit completed."
+}
+
 # =========================
 # Windows updates (PSWindowsUpdate or USOClient fallback)
 # =========================
