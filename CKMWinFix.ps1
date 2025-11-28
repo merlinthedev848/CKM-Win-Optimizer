@@ -187,7 +187,7 @@ Function Check-SystemHealth {
 }
 
 # =========================
-# Fix Permissions (Scoped with Progress)
+# Fix Permissions (Scoped with Progress + Ownership)
 # =========================
 Function Fix-SystemPermissions {
     if (-not $Global:FixPermissions) {
@@ -199,25 +199,41 @@ Function Fix-SystemPermissions {
     Write-Host "=== Resetting File and Registry Permissions (Scoped) ===" -ForegroundColor Yellow
 
     try {
-        # Step 1: Reset ACLs on user profile
-        Write-Progress -Activity "Fix-SystemPermissions" -Status "Resetting ACLs on user profile..." -PercentComplete 25
-        Write-Host "Resetting ACLs on $env:USERPROFILE..." -ForegroundColor Cyan
-        icacls "$env:USERPROFILE" /reset /t /c /q 2>$null
+        $user = $env:USERNAME
+        $profilePath = $env:USERPROFILE
 
-        # Step 2: Reset ACLs on ProgramData
-        Write-Progress -Activity "Fix-SystemPermissions" -Status "Resetting ACLs on ProgramData..." -PercentComplete 50
-        Write-Host "Resetting ACLs on C:\ProgramData..." -ForegroundColor Cyan
-        icacls "C:\ProgramData" /reset /t /c /q 2>$null
+        # Step 1: Reset ACLs on user profile
+        Write-Progress -Activity "Fix-SystemPermissions" -Status "Resetting ACLs on user profile..." -PercentComplete 20
+        Write-Host "Resetting ACLs on $profilePath..." -ForegroundColor Cyan
+        icacls "$profilePath" /reset /t /c | Out-Null
+
+        # Step 2: Grant full control back to current user
+        Write-Progress -Activity "Fix-SystemPermissions" -Status "Granting full control to $user..." -PercentComplete 40
+        Write-Host "Granting full control to $user..." -ForegroundColor Cyan
+        icacls "$profilePath" /grant:r "$user:(OI)(CI)F" /t /c | Out-Null
+
+        # Step 3: Take ownership of profile folder
+        Write-Progress -Activity "Fix-SystemPermissions" -Status "Taking ownership of profile folder..." -PercentComplete 60
+        Write-Host "Taking ownership of $profilePath..." -ForegroundColor Cyan
+        takeown /f "$profilePath" /r /d y | Out-Null
 
         $Global:RepairCount++
-        Log "ACLs reset for user profile and ProgramData."
+        Log "ACLs reset, full control granted, and ownership restored for $user on $profilePath."
 
-        # Step 3: Refresh registry & security policy defaults
+        # Step 4: Reset ACLs on ProgramData (safe)
+        Write-Progress -Activity "Fix-SystemPermissions" -Status "Resetting ACLs on ProgramData..." -PercentComplete 80
+        Write-Host "Resetting ACLs on C:\ProgramData..." -ForegroundColor Cyan
+        icacls "C:\ProgramData" /reset /t /c | Out-Null
+
+        $Global:RepairCount++
+        Log "ACLs reset for ProgramData."
+
+        # Step 5: Refresh registry & security policy defaults
         $DefltBase = Join-Path $env:windir "inf\defltbase.inf"
         if (Test-Path $DefltBase) {
-            Write-Progress -Activity "Fix-SystemPermissions" -Status "Refreshing registry & security policy defaults..." -PercentComplete 75
+            Write-Progress -Activity "Fix-SystemPermissions" -Status "Refreshing registry & security policy defaults..." -PercentComplete 90
             Write-Host "Refreshing registry & security policy defaults..." -ForegroundColor Cyan
-            secedit /configure /cfg $DefltBase /db defltbase.sdb /verbose 2>$null
+            secedit /configure /cfg $DefltBase /db defltbase.sdb /verbose | Out-Null
 
             $Global:RepairCount++
             Log "Registry and security policy defaults refreshed."
@@ -227,7 +243,7 @@ Function Fix-SystemPermissions {
             Write-Host "Skipped registry defaults reset (defltbase.inf not found)." -ForegroundColor Yellow
         }
 
-        # Step 4: Completed
+        # Step 6: Completed
         Write-Progress -Activity "Fix-SystemPermissions" -Status "Completed" -PercentComplete 100
         Log "Fix-SystemPermissions Completed."
         Write-Host "=== Fix-SystemPermissions Completed ===" -ForegroundColor Green
@@ -237,8 +253,6 @@ Function Fix-SystemPermissions {
         Write-Host "Permission repair error: $($_.Exception.Message)" -ForegroundColor Red
     }
 }
-
-
 
 # =========================
 # Optimization tasks (cleanup, startup, visuals, power)
