@@ -1,4 +1,4 @@
-# =========================
+# ========================= 
 # Setup and logging
 # =========================
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
