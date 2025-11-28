@@ -381,46 +381,70 @@ Function Ensure-Defender {
         if ($DefenderFeature.State -ne "Enabled") {
             Write-Host "Windows Defender is not enabled. Installing..." -ForegroundColor Yellow
             Enable-WindowsOptionalFeature -Online -FeatureName Windows-Defender-Features -All -NoRestart | Out-Null
+            $Global:RepairCount++
             Log "Windows Defender feature enabled."
         } else {
             Log "Windows Defender is already enabled."
         }
     } catch {
-        Log "Failed to check/enable Windows Defender: $_"
+        $Global:ErrorCount++
+        Log "Failed to check/enable Windows Defender: $($_.Exception.Message)"
     }
 }
+
 Function Run-SecurityScans {
     Log "Starting Security Scans..."
+    Write-Host "=== Security Scans ===" -ForegroundColor Yellow
 
     $MpCmd = "C:\ProgramData\Microsoft\Windows Defender\Platform\*\MpCmdRun.exe"
     $Exe = Get-Item $MpCmd -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 
     if ($Exe) {
+        # Update signatures
         Write-Host "=== Updating Windows Defender Signatures (CLI) ===" -ForegroundColor Yellow
-        try { Start-Process $Exe.FullName -ArgumentList "-SignatureUpdate" -Wait; Log "Defender signatures updated via CLI." }
-        catch { Log "Defender signature update error: $_" }
+        try {
+            Start-Process $Exe.FullName -ArgumentList "-SignatureUpdate" -Wait
+            $Global:UpdateCount++
+            Log "Defender signatures updated via CLI."
+        } catch {
+            $Global:ErrorCount++
+            Log "Defender signature update error: $($_.Exception.Message)"
+        }
 
+        # Run scan
         Write-Host "=== Running Windows Defender Scan (CLI) ===" -ForegroundColor Yellow
         try {
             if ($Global:EnableFullScan) {
                 Start-Process $Exe.FullName -ArgumentList "-Scan -ScanType 2" -Wait
+                $Global:RepairCount++
                 Log "Defender Full Scan triggered via CLI."
             } else {
                 Start-Process $Exe.FullName -ArgumentList "-Scan -ScanType 1" -Wait
+                $Global:RepairCount++
                 Log "Defender Quick Scan triggered via CLI."
             }
-        } catch { Log "Defender CLI scan error: $_" }
+        } catch {
+            $Global:ErrorCount++
+            Log "Defender CLI scan error: $($_.Exception.Message)"
+        }
     } else {
+        $Global:SkippedCount++
         Log "Windows Defender CLI not found. Skipping Defender scan."
     }
 
+    # Audit manual-start services
     Write-Host "Checking manual-start services currently running..." -ForegroundColor Yellow
     try {
         Get-Service | Where-Object { $_.StartType -eq "Manual" -and $_.Status -eq "Running" } | Format-Table -AutoSize
-    } catch { Log "Service audit error: $_" }
+        Log "Manual-start services audit completed."
+    } catch {
+        $Global:ErrorCount++
+        Log "Service audit error: $($_.Exception.Message)"
+    }
 
     Log "Security Scans Completed."
 }
+
 # =========================
 # Debloat Windows Apps + Telemetry Removal
 # =========================
@@ -770,57 +794,76 @@ Function Compare-PerformanceBaseline {
 # =========================
 Function Backup-UserData {
     Log "Starting Backup of User Data..."
+    Write-Host "=== Backup User Data ===" -ForegroundColor Yellow
+
     $BackupSource = "$env:USERPROFILE\Documents"
     $BackupDestination = "$PSScriptRoot\Backups"
-    if (!(Test-Path -Path $BackupDestination)) { New-Item -ItemType Directory -Path $BackupDestination | Out-Null }
+
+    if (!(Test-Path -Path $BackupDestination)) {
+        New-Item -ItemType Directory -Path $BackupDestination | Out-Null
+    }
 
     $RoboArgs = "`"$BackupSource`" `"$BackupDestination`" /E /COPY:DAT /R:1 /W:1 /NFL /NDL /NP /XA:SH /XJ /LOG:$LogFile"
+
     try {
         Start-Process -FilePath "robocopy.exe" -ArgumentList $RoboArgs -Wait
         Write-Host "Backup Completed: $BackupSource to $BackupDestination" -ForegroundColor Green
-        Log "Backup Completed."
+        $Global:BackupStatus = "Success"
+        Log "Backup Completed successfully."
     } catch {
-        Log "Backup error: $_"
-        Write-Host "Backup encountered an error: $_" -ForegroundColor Red
+        $Global:BackupStatus = "Failed"
+        $Global:ErrorCount++
+        Log "Backup error: $($_.Exception.Message)"
+        Write-Host "Backup encountered an error: $($_.Exception.Message)" -ForegroundColor Red
     }
+
+    Log "Backup process finished."
 }
+
 # =========================
 # Event log analysis and optional purge
 # =========================
 Function Analyze-EventLogs {
     Log "Analyzing Windows Event Logs..."
+    Write-Host "=== Event Log Analysis ===" -ForegroundColor Yellow
+
     try {
-        $Errors = Get-WinEvent -LogName Application -MaxEvents 100 -ErrorAction SilentlyContinue | Where-Object {$_.LevelDisplayName -eq "Error"}
-        if ($Errors) {
+        $Errors = Get-WinEvent -LogName Application -MaxEvents 100 -ErrorAction SilentlyContinue |
+                  Where-Object { $_.LevelDisplayName -eq "Error" }
+
+        if ($Errors -and $Errors.Count -gt 0) {
+            $Global:AuditCount += $Errors.Count
             Write-Host "Found Application Errors:" -ForegroundColor Red
             $Errors | Format-Table -Property TimeCreated, Message -AutoSize
+            Log "Found $($Errors.Count) Application errors in the last 100 events."
         } else {
+            $Global:SkippedCount++
             Write-Host "No Application Errors Found." -ForegroundColor Green
+            Log "No Application errors detected."
         }
-    } catch { Log "Event log analysis error: $_" }
+    } catch {
+        $Global:ErrorCount++
+        Log "Event log analysis error: $($_.Exception.Message)"
+    }
 
     if ($Global:ClearEventLogs) {
         Write-Host "Clearing Event Logs..." -ForegroundColor Yellow
         try {
-            Get-EventLog -List | ForEach-Object { Clear-EventLog -LogName $_.Log -ErrorAction SilentlyContinue }
+            Get-EventLog -List | ForEach-Object {
+                Clear-EventLog -LogName $_.Log -ErrorAction SilentlyContinue
+            }
+            $Global:RepairCount++
             Log "Event Logs Cleared."
-        } catch { Log "Event log clear error: $_" }
+        } catch {
+            $Global:ErrorCount++
+            Log "Event log clear error: $($_.Exception.Message)"
+        }
     }
+
     Log "Event Log Analysis Completed."
 }
+
 # =========================
-# Software audit (x64 + x86)
-# =========================
-Function Audit-Software {
-    Log "Auditing Installed Software..."
-    try {
-        Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*,HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\* -ErrorAction SilentlyContinue |
-        Where-Object { $_.DisplayName } |
-        Sort-Object DisplayName |
-        ForEach-Object { Write-Host "$($_.DisplayName): Version $($_.DisplayVersion)" }
-    } catch { Log "Software audit error: $_" }
-    Log "Software Audit Completed."
-}# =========================
 # Audit Installed Software
 # =========================
 Function Audit-InstalledSoftware {
@@ -939,18 +982,13 @@ try {
 
     Invoke-Section "Core repairs and cleanup" {
         Troubleshoot-Issues       # SFC, DISM, DNS
-        $Global:RepairCount++
         Fix-SystemPermissions     # Reset ACLs and registry defaults
-        $Global:RepairCount++
         Optimize-System           # Temp/cache cleanup, startup, visuals, power plan
-        $Global:RepairCount++
     }
 
     Invoke-Section "Storage and integrity" {
         Optimize-Storage          # Defrag HDDs, TRIM SSDs
-        $Global:RepairCount++
         Check-DiskIntegrity       # Health status of physical disks
-        $Global:RepairCount++
     }
 
     Invoke-Section "Security and debloat" {
@@ -962,17 +1000,14 @@ try {
     Invoke-Section "Updates and performance" {
         Check-WindowsUpdates      # OS updates (PSWindowsUpdate/USOClient)
         Update-System             # Drivers + Winget apps
-        $Global:UpdateCount++
         Optimize-NetworkAuto      # Adapter detection + speed visuals
         Compare-PerformanceBaseline
     }
 
     Invoke-Section "Backup and audit" {
         Backup-UserData
-        $Global:BackupStatus = "Success"
         Analyze-EventLogs
-        Audit-Software
-        $Global:AuditCount++
+        Audit-InstalledSoftware   # Compliance + unused software audit
     }
 
     Invoke-Section "Scheduling and summary" {
